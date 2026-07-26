@@ -8,6 +8,7 @@
 
 - Parent toolchain: `~/ai/machin`
 - Language catalog: run `machin guide` (or `machin guide --skill backend`)
+- GitHub remote: `git@github.com:javimosch/lume.git`
 - This project should be listed in [awesome-machin](https://github.com/javimosch/awesome-machin) once public.
 
 ## code conventions
