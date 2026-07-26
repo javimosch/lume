@@ -21,9 +21,12 @@
       </div>
       <h1 class="text-6xl md:text-7xl font-extrabold text-white tracking-tight">lume</h1>
       <p class="text-xl text-slate-400 max-w-2xl leading-relaxed">
-        A tiny, agent-friendly, git-like version control system built with
+        A tiny, agent-friendly, <strong class="text-white">git-like</strong> version control system built with
         <a href="https://github.com/javimosch/machin" class="text-slate-200 hover:text-white underline decoration-white/20 underline-offset-4">machin/MFL</a>.
         Every command emits JSON. One small native binary.
+      </p>
+      <p class="text-base text-slate-500 max-w-2xl leading-relaxed">
+        <strong class="text-slate-400">Git-like, not git-based.</strong> lume borrows git's concepts (blob, tree, commit, refs, HEAD) and content-addressed storage, but the implementation, object format, and network protocol are written from scratch in MFL. Inspired by the idea of <a href="https://github.com/nervosys/Lit" class="text-slate-400 hover:text-white underline">Lit</a>.
       </p>
       <div class="flex flex-wrap gap-4 pt-4">
         <a href="https://github.com/javimosch/lume" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white text-black font-semibold hover:bg-slate-200 transition">GitHub <span aria-hidden="true">→</span></a>
@@ -49,7 +52,7 @@ cd lume
       </div>
       <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
         <h3 class="text-white font-semibold mb-2">Tiny</h3>
-        <p class="text-sm text-slate-400 leading-relaxed">SHA-256 content-addressed objects, SQLite staging index, and a native binary around 70 KB.</p>
+        <p class="text-sm text-slate-400 leading-relaxed">SHA-256 content-addressed objects, SQLite staging index, and a native binary around 100 KB.</p>
       </div>
       <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
         <h3 class="text-white font-semibold mb-2">Network aware</h3>
@@ -74,8 +77,37 @@ cd lume
       </div>
     </section>
 
+    <section class="mt-16 border-t border-white/10 pt-10">
+      <h2 class="text-2xl font-bold text-white mb-4">Benchmarks</h2>
+      <p class="text-sm text-slate-400 mb-4">Measured on an x86_64 Linux workstation against <code>/usr/bin/git</code> 2.34.1.</p>
+      <div class="overflow-x-auto border border-white/10 rounded-2xl bg-white/[0.02]">
+        <table class="w-full text-sm text-left text-slate-300">
+          <thead class="text-xs text-slate-500 uppercase border-b border-white/10">
+            <tr>
+              <th class="px-4 py-3">metric</th>
+              <th class="px-4 py-3">lume</th>
+              <th class="px-4 py-3">git</th>
+              <th class="px-4 py-3">note</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/5">
+            <tr><td class="px-4 py-3">binary size</td><td class="px-4 py-3">100 KB</td><td class="px-4 py-3">3.7 MB</td><td class="px-4 py-3 text-slate-500">~36× smaller</td></tr>
+            <tr><td class="px-4 py-3"><code>init</code></td><td class="px-4 py-3">~0.02 s</td><td class="px-4 py-3">&lt;0.01 s</td><td class="px-4 py-3 text-slate-500">comparable</td></tr>
+            <tr><td class="px-4 py-3"><code>add . && commit</code> (110 files)</td><td class="px-4 py-3">~1.36 s</td><td class="px-4 py-3">~0.01 s</td><td class="px-4 py-3 text-slate-500">loose JSON objects; no pack files yet</td></tr>
+            <tr><td class="px-4 py-3">repo metadata size</td><td class="px-4 py-3">434 KB</td><td class="px-4 py-3">475 KB</td><td class="px-4 py-3 text-slate-500">within 10%</td></tr>
+            <tr><td class="px-4 py-3"><code>push</code> 50 files (localhost)</td><td class="px-4 py-3">~0.67 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500">no pack negotiation</td></tr>
+            <tr><td class="px-4 py-3"><code>clone</code> 50 files (localhost)</td><td class="px-4 py-3">~0.66 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500"></td></tr>
+            <tr><td class="px-4 py-3"><code>pull</code> one new file</td><td class="px-4 py-3">~0.89 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500"></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="text-sm text-slate-500 mt-4">
+        Why machin? A single, self-contained native binary with no runtime and no pack-format archaeology. Every command emits JSON, and the network protocol is plain HTTP + JSON objects. The trade-off is batch throughput until the storage layer is optimized.
+      </p>
+    </section>
+
     <footer class="mt-20 text-sm text-slate-500 border-t border-white/10 pt-8">
-      Built with machin/MFL. Clean-room from the idea of Lit. Source on
+      Built with machin/MFL. Clean-room from the idea of <a href="https://github.com/nervosys/Lit" class="text-slate-300 hover:text-white">Lit</a>. Source on
       <a href="https://github.com/javimosch/lume" class="text-slate-300 hover:text-white">GitHub</a>.
     </footer>
   </main>

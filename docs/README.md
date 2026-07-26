@@ -2,11 +2,13 @@
 
 `lume` is a minimal, content-addressed VCS that feels like git but emits JSON for every command. It is written in MFL (machin) and compiles to a single native binary.
 
+> lume is **git-like, not git-based**. It borrows git's concepts (blob, tree, commit, refs, HEAD) and content-addressed storage, but the implementation, object format, and network protocol are written from scratch in MFL. It does not wrap git, speak the git protocol, or read pack files.
+
 ## goals
 
 - **agent-first**: every command prints machine-readable JSON; no interactive prompts.
 - **tiny**: one binary, SQLite for the index, SHA-256 for object identity.
-- **clean room**: inspired by the *concept* of Lit, but implemented from scratch.
+- **clean room**: inspired by the *concept* of [Lit](https://github.com/nervosys/Lit) (JSON-first, agent-native), but implemented from scratch.
 - **machin dogfood**: exercises MFL file I/O, SQLite, JSON, HTTP, and the CLI path.
 
 ## build
@@ -48,6 +50,22 @@ Requires `machin` on PATH and a C compiler (`cc`).
 - `POST /objects/<hash>` — store raw object JSON
 
 `push` walks all objects reachable from a ref and uploads any the remote does not already have, then updates the remote ref. `pull`/`clone` fetch the remote ref, its tree, and all blobs, then rebuild the working tree and SQLite index.
+
+## benchmarks
+
+Measured on an x86_64 Linux workstation against `/usr/bin/git` 2.34.1.
+
+| metric | lume | git | note |
+|---|---|---|---|
+| binary size | 100 KB | 3.7 MB | lume is ~36× smaller |
+| `init` | ~0.02 s | <0.01 s | comparable cold start |
+| `add . && commit` (110 small files) | ~1.36 s | ~0.01 s | lume writes loose JSON objects per file; no pack optimization yet |
+| repo metadata size after commit | 434 KB (.lume) | 475 KB (.git) | within 10% |
+| `push` 50 files over localhost HTTP | ~0.67 s | — | no pack negotiation; simple object exchange |
+| `clone` 50 files over localhost HTTP | ~0.66 s | — | |
+| `pull` one new file over localhost HTTP | ~0.89 s | — | |
+
+Why machin? A single, small, self-contained native binary with no runtime, no suite of helper binaries, and no pack-format archaeology. Every command emits JSON by default, and the network protocol is plain HTTP + JSON objects. The trade-off is batch throughput until the storage layer is optimized.
 
 ## storage layout
 
