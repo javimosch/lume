@@ -1,0 +1,76 @@
+// lume refs: HEAD, branches, and current commit resolution.
+
+// HeadPath returns .lume/HEAD path.
+func HeadPath() (p) { p = LumeDir() + "/HEAD" }
+
+// RefsDir returns the heads directory.
+func RefsDir() (p) { p = LumeDir() + "/refs/heads" }
+
+// RefPath returns the filesystem path for a ref name.
+func RefPath(name) (p) { p = RefsDir() + "/" + name }
+
+// ReadHead returns the raw contents of .lume/HEAD.
+func ReadHead() (s) {
+    s = read_file(HeadPath())
+    s = trim(s)
+}
+
+// CurrentRef returns the ref path (e.g. "refs/heads/main") or empty if detached.
+func CurrentRef() (ref) {
+    s := ReadHead()
+    if has_prefix(s, "ref: ") {
+        ref = substr(s, 5, len(s))
+        ref = trim(ref)
+    }
+}
+
+// CurrentBranchName returns the branch name from HEAD, or empty.
+func CurrentBranchName() (name) {
+    ref := CurrentRef()
+    if ref == "" { return }
+    if has_prefix(ref, "refs/heads/") {
+        name = substr(ref, 11, len(ref))
+    }
+}
+
+// ResolveHead returns the commit hash HEAD points to, or empty.
+func ResolveHead() (hash) {
+    s := ReadHead()
+    if has_prefix(s, "ref: ") {
+        ref := substr(s, 5, len(s))
+        ref = trim(ref)
+        hash = CommitAtRef(ref)
+    } else {
+        hash = s
+    }
+}
+
+// WriteRef writes a branch ref to a commit hash.
+func WriteRef(name, hash) {
+    path := RefPath(name)
+    EnsureParentDir(path)
+    write_file(path, hash + "\n")
+}
+
+// UpdateHead updates HEAD to point to a ref or a raw hash.
+func UpdateHead(refOrHash, isRef) {
+    EnsureParentDir(HeadPath())
+    if isRef == 1 {
+        write_file(HeadPath(), "ref: " + refOrHash + "\n")
+    } else {
+        write_file(HeadPath(), refOrHash + "\n")
+    }
+}
+
+// ListBranches returns all branch names and their commit hashes.
+func ListBranches() (branches) {
+    branches = []BranchRef{}
+    names := list_dir(RefsDir())
+    i := 0
+    while i < len(names) {
+        name := names[i]
+        hash := CommitAtRef("refs/heads/" + name)
+        branches = append(branches, BranchRef{name: name, hash: hash})
+        i = i + 1
+    }
+}

@@ -1,0 +1,266 @@
+// lume commands: init, add, commit, status, log, branch, checkout, diff, show.
+
+// CmdInit creates a fresh lume repository.
+func CmdInit() (r) {
+    mkdir(LumeDir())
+    mkdir(LumeDir() + "/objects")
+    mkdir(LumeDir() + "/refs/heads")
+    UpdateHead("refs/heads/main", 1)
+
+    db := OpenIndex()
+    InitIndexSchema(db)
+    sqlite_close(db)
+
+    // Initial empty config with user info.
+    user := AuthorName()
+    write_file(LumeDir() + "/config", "[user]\nname = " + user + "\n")
+
+    r = InitResult{path: LumeDir()}
+}
+
+// AuthorName returns a default author from environment or system user.
+func AuthorName() (name) {
+    name = env("LUME_AUTHOR")
+    if name == "" { name = env("USER") }
+    if name == "" { name = "lume" }
+}
+
+// CmdAdd stages one or more files or directories.
+// paths is the full args array; element [0] is the program, [1] is "add".
+func CmdAdd(paths) (r) {
+    db := OpenIndex()
+    InitIndexSchema(db)
+    i := 2
+    while i < len(paths) {
+        p := paths[i]
+        if p != "" { AddSinglePath(db, p) }
+        i = i + 1
+    }
+    sqlite_close(db)
+    r = make(map[string]string)
+    r["ok"] = "true"
+}
+
+// AddSinglePath recursively stages a single path (file or directory).
+func AddSinglePath(db, path) {
+    if DirExists(path) {
+        files := WorktreeFiles(path)
+        j := 0
+        while j < len(files) {
+            StageFile(db, files[j])
+            j = j + 1
+        }
+    } else if FileExists(path) {
+        StageFile(db, path)
+    }
+}
+
+// StageFile computes the blob hash and inserts/updates the index entry.
+func StageFile(db, path) {
+    raw := read_file_bytes(path)
+    obj := Obj{otype: "blob", data: base64_encode_bytes(raw)}
+    hash := WriteObject(obj)
+    size := len(raw)
+    AddIndexEntry(db, path, "100644", hash, 0, size)
+}
+
+// CmdStatus returns the working tree status.
+func CmdStatus() (r) {
+    db := OpenIndex()
+    InitIndexSchema(db)
+    r = BuildStatus(db)
+    sqlite_close(db)
+}
+
+// CmdCommit creates a commit from the current index.
+func CmdCommit(message) (r) {
+    db := OpenIndex()
+    InitIndexSchema(db)
+    entries := ListIndex(db)
+    sqlite_close(db)
+
+    // Convert IndexEntry to TreeEntry for tree construction.
+    treeEntries := []TreeEntry{}
+    i := 0
+    while i < len(entries) {
+        e := entries[i]
+        treeEntries = append(treeEntries, TreeEntry{mode: e.mode, name: e.path, hash: e.hash})
+        i = i + 1
+    }
+
+    _, treeHash := TreeFromEntries(treeEntries)
+    parent := ResolveHead()
+    author := AuthorName()
+    ts := now()
+
+    commitObj := Obj{otype: "commit", tree: treeHash, parent: parent, author: author, timestamp: ts, message: message}
+    commitHash := WriteObject(commitObj)
+
+    ref := CurrentRef()
+    if ref != "" {
+        WriteRef(CurrentBranchName(), commitHash)
+    } else {
+        // Detached HEAD: update HEAD directly to hash.
+        UpdateHead(commitHash, 0)
+    }
+
+    info := CommitInfo{hash: commitHash, short: substr(commitHash, 0, 16), tree: treeHash, parent: parent, author: author, timestamp: ts, message: message}
+    r = info
+}
+
+// CmdLog returns commit history from HEAD back to root.
+func CmdLog() (r) {
+    r = []CommitInfo{}
+    hash := ResolveHead()
+    while hash != "" {
+        jsonStr := ReadObject(hash)
+        if jsonStr == "" { break }
+        c := parse(jsonStr, Obj{})
+        info := CommitInfo{hash: hash, short: substr(hash, 0, 16), tree: c.tree, parent: c.parent, author: c.author, timestamp: c.timestamp, message: c.message}
+        r = append(r, info)
+        hash = c.parent
+    }
+}
+
+// CmdBranch creates a new branch at the current commit or lists branches.
+func CmdBranch(name) (r) {
+    if name == "" {
+        r = ListBranches()
+        return
+    }
+    hash := ResolveHead()
+    if hash == "" {
+        r = []BranchRef{}
+        return
+    }
+    WriteRef(name, hash)
+    r = []BranchRef{}
+    r = append(r, BranchRef{name: name, hash: hash})
+}
+
+// CmdCheckout switches HEAD to a branch or commit hash and restores the tree.
+func CmdCheckout(target) (r) {
+    // First try branch ref.
+    refHash := CommitAtRef("refs/heads/" + target)
+    branchName := target
+    if refHash == "" {
+        // Try full or short hash.
+        full := ResolveShortHash(target)
+        if full != "" {
+            refHash = full
+            branchName = ""
+        }
+    }
+    if refHash == "" {
+        r = make(map[string]string)
+        r["ok"] = "false"
+        r["error"] = "target not found"
+        return
+    }
+
+    currentHead := ResolveHead()
+    currentTree := TreeAtCommit(currentHead)
+    treeHash := TreeAtCommit(refHash)
+    if treeHash != "" {
+        RestoreTree(currentTree, treeHash)
+    }
+
+    if branchName != "" {
+        UpdateHead("refs/heads/" + branchName, 1)
+    } else {
+        UpdateHead(refHash, 0)
+    }
+
+    // Reset index to match the tree.
+    db := OpenIndex()
+    ResetIndex(db)
+    if treeHash != "" {
+        jsonStr := ReadObject(treeHash)
+        treeObj := parse(jsonStr, Obj{})
+        i := 0
+        while i < len(treeObj.entries) {
+            e := treeObj.entries[i]
+            AddIndexEntry(db, e.name, e.mode, e.hash, 0, 0)
+            i = i + 1
+        }
+    }
+    sqlite_close(db)
+
+    r = make(map[string]string)
+    r["ok"] = "true"
+}
+
+// RestoreTree removes files in currentTree that are absent from targetTree,
+// then writes all blobs from targetTree into the working tree.
+func RestoreTree(currentTreeHash, targetTreeHash) {
+    currentEntries := []TreeEntry{}
+    if currentTreeHash != "" {
+        jsonStr := ReadObject(currentTreeHash)
+        if jsonStr != "" {
+            c := parse(jsonStr, Obj{})
+            currentEntries = c.entries
+        }
+    }
+
+    targetEntries := []TreeEntry{}
+    if targetTreeHash != "" {
+        jsonStr := ReadObject(targetTreeHash)
+        if jsonStr != "" {
+            t := parse(jsonStr, Obj{})
+            targetEntries = t.entries
+        }
+    }
+    targetMap := TreeEntriesMap(targetEntries)
+
+    i := 0
+    while i < len(currentEntries) {
+        e := currentEntries[i]
+        if !has(targetMap, e.name) {
+            remove(e.name)
+        }
+        i = i + 1
+    }
+
+    j := 0
+    while j < len(targetEntries) {
+        e := targetEntries[j]
+        blobJson := ReadObject(e.hash)
+        if blobJson != "" {
+            blobObj := parse(blobJson, Obj{})
+            BlobToPath(blobObj, e.name)
+        }
+        j = j + 1
+    }
+}
+
+// CmdShow returns the JSON object for a hash or resolves a ref/branch.
+func CmdShow(target) (r) {
+    if target == "" {
+        r = Obj{}
+        return
+    }
+    hash := target
+    // Try branch/ref first.
+    refHash := CommitAtRef("refs/heads/" + target)
+    if refHash != "" { hash = refHash }
+    if hash != "" && len(hash) != 64 {
+        full := ResolveShortHash(hash)
+        if full != "" { hash = full }
+    }
+    jsonStr := ReadObject(hash)
+    if jsonStr == "" {
+        r = Obj{}
+        return
+    }
+    r = parse(jsonStr, Obj{})
+}
+
+// CmdDiff compares the index or a commit tree against another tree.
+func CmdDiff(aHash, bHash) (r) {
+    if aHash == "" { aHash = TreeAtCommit(ResolveHead()) }
+    if bHash == "" { bHash = TreeAtCommit(ResolveHead()) }
+    // TODO: implement tree diff.
+    r = make(map[string]string)
+    r["a"] = aHash
+    r["b"] = bHash
+}

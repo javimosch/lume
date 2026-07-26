@@ -1,0 +1,39 @@
+// lume worktree: scanning working tree files and computing hashes.
+
+// WorktreeFiles returns a list of file paths under the repo root,
+// excluding the .lume directory. Uses `find` for recursion.
+func WorktreeFiles(root) (files) {
+    files = []string{}
+    if root == "" { root = "." }
+    code, out, _ := exec("find " + root + " -type f -not -path '" + root + "/.lume/*' -print | sort")
+    if code != 0 { return }
+    lines := split(out, "\n")
+    i := 0
+    while i < len(lines) {
+        line := trim(lines[i])
+        if line != "" {
+            if has_prefix(line, "./") {
+                line = substr(line, 2, len(line))
+            }
+            files = append(files, line)
+        }
+        i = i + 1
+    }
+}
+
+// HashWorktreeFile computes the blob hash of a working tree file.
+func HashWorktreeFile(path) (hash) {
+    _, hash = BlobFromPath(path)
+}
+
+// FileExists returns true if the path is a regular file.
+func FileExists(path) (ok) {
+    code, _, _ := exec("test -f " + path)
+    if code == 0 { ok = true } else { ok = false }
+}
+
+// DirExists returns true if the path is a directory.
+func DirExists(path) (ok) {
+    code, _, _ := exec("test -d " + path)
+    if code == 0 { ok = true } else { ok = false }
+}

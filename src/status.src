@@ -1,0 +1,72 @@
+// lume status: compare HEAD tree, index, and working tree.
+
+// BuildStatus compares the current index and working tree against HEAD.
+func BuildStatus(db) (r) {
+    r = StatusResult{clean: true, staged: []string{}, modified: []string{}, untracked: []string{}, deleted: []string{}}
+    r.branch = CurrentBranchName()
+
+    headHash := ResolveHead()
+    headTreeHash := TreeAtCommit(headHash)
+
+    headEntries := []TreeEntry{}
+    if headTreeHash != "" {
+        jsonStr := ReadObject(headTreeHash)
+        if jsonStr != "" {
+            treeObj := parse(jsonStr, Obj{})
+            headEntries = treeObj.entries
+        }
+    }
+    headMap := TreeEntriesMap(headEntries)
+
+    idxEntries := ListIndex(db)
+    idxMap := IndexEntryMap(idxEntries)
+
+    // Staged: in index and different or absent from HEAD.
+    i := 0
+    while i < len(idxEntries) {
+        e := idxEntries[i]
+        if has(headMap, e.path) {
+            head := headMap[e.path]
+            if head.hash != e.hash {
+                r.staged = append(r.staged, e.path)
+                r.clean = false
+            }
+        } else {
+            r.staged = append(r.staged, e.path)
+            r.clean = false
+        }
+        i = i + 1
+    }
+
+    // Deleted: in HEAD and index but missing from working tree.
+    j := 0
+    while j < len(headEntries) {
+        h := headEntries[j]
+        if has(idxMap, h.name) && !FileExists(h.name) {
+            r.deleted = append(r.deleted, h.name)
+            r.clean = false
+        }
+        j = j + 1
+    }
+
+    // Modified and untracked from working tree scan.
+    files := WorktreeFiles(".")
+    k := 0
+    while k < len(files) {
+        f := files[k]
+        if has(idxMap, f) {
+            idx := idxMap[f]
+            fileHash := HashWorktreeFile(f)
+            if fileHash != idx.hash {
+                r.modified = append(r.modified, f)
+                r.clean = false
+            }
+        } else {
+            if !has(headMap, f) {
+                r.untracked = append(r.untracked, f)
+                r.clean = false
+            }
+        }
+        k = k + 1
+    }
+}

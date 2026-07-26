@@ -1,0 +1,188 @@
+// lume core: object model, hash, read/write for .lume/objects
+//
+// Objects are stored as JSON and content-addressed by SHA-256 of that JSON.
+// Kinds: blob, tree, commit.
+
+// LumeDir returns the path to the lume meta directory (currently CWD only).
+func LumeDir() (s) { s = ".lume" }
+
+// Object types used for JSON round-trips.
+type TreeEntry struct {
+    mode string
+    name string
+    hash string
+}
+
+type Obj struct {
+    otype     string
+    data      string        // blob: base64 of file bytes
+    entries   []TreeEntry   // tree: sorted list of entries
+    tree      string        // commit: tree hash
+    parent    string        // commit: parent commit hash (empty if root)
+    author    string        // commit: author string
+    timestamp int           // commit: unix seconds
+    message   string        // commit: message
+}
+
+// IndexEntry mirrors the SQLite index table.
+type IndexEntry struct {
+    path      string
+    mode      string
+    hash      string
+    mtime     int
+    size      int
+}
+
+// BranchRef mirrors refs/heads rows.
+type BranchRef struct {
+    name string
+    hash string
+}
+
+// InitResult is returned by cmd_init.
+type InitResult struct {
+    path string
+}
+
+// StatusResult is returned by cmd_status.
+type StatusResult struct {
+    branch    string
+    clean     bool
+    staged    []string
+    modified  []string
+    untracked []string
+    deleted   []string
+}
+
+// CommitInfo is returned by cmd_log.
+type CommitInfo struct {
+    hash      string
+    short     string
+    tree      string
+    parent    string
+    author    string
+    timestamp int
+    message   string
+}
+
+// HashObject returns the SHA-256 hex hash of an object JSON string.
+func HashObject(jsonStr) (h) {
+    h = to_hex(sha256_bytes(bytes(jsonStr)))
+}
+
+// ObjectPath returns the storage path for a given hash.
+func ObjectPath(hash) (p) {
+    p = LumeDir() + "/objects/" + substr(hash, 0, 2) + "/" + substr(hash, 2, len(hash))
+}
+
+// EnsureParentDir recursively creates parent directories for a file path.
+func EnsureParentDir(path) (ok) {
+    ok = 0
+    code, dir, _ := exec("dirname " + path)
+    if code != 0 { return }
+    dir = trim(dir)
+    c2, _, _ := exec("mkdir -p " + dir)
+    if c2 == 0 { ok = 1 }
+}
+
+// WriteObject stores an object's JSON and returns its hash.
+func WriteObject(obj) (hash) {
+    jsonStr := json(obj)
+    hash = HashObject(jsonStr)
+    path := ObjectPath(hash)
+    EnsureParentDir(path)
+    write_file_bytes(path, bytes(jsonStr))
+}
+
+// ReadObject returns the JSON for a stored object, or empty string on miss.
+func ReadObject(hash) (jsonStr) {
+    if hash == "" { jsonStr = ""  return }
+    path := ObjectPath(hash)
+    jsonStr = read_file(path)
+}
+
+// BlobFromPath reads a file and returns a blob Obj plus its hash.
+func BlobFromPath(path) (obj, hash) {
+    raw := read_file_bytes(path)
+    obj = Obj{otype: "blob", data: base64_encode_bytes(raw)}
+    hash = WriteObject(obj)
+}
+
+// BlobToPath writes a blob's bytes to a file path.
+func BlobToPath(obj, path) (ok) {
+    ok = -1
+    if obj.otype != "blob" { return }
+    raw := base64_decode_bytes(obj.data)
+    EnsureParentDir(path)
+    ok = write_file_bytes(path, raw)
+}
+
+// TreeFromEntries builds a tree Obj from a slice of index/tree entries.
+func TreeFromEntries(entries) (obj, hash) {
+    sorted := SortEntries(entries)
+    obj = Obj{otype: "tree", entries: sorted}
+    hash = WriteObject(obj)
+}
+
+// SortEntries sorts tree/index entries by name using simple bubble sort.
+func SortEntries(entries) (out) {
+    out = entries
+    n := len(out)
+    i := 0
+    while i < n {
+        j := 0
+        while j < n-1 {
+            if out[j].name > out[j+1].name {
+                tmp := out[j]
+                out[j] = out[j+1]
+                out[j+1] = tmp
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
+
+// TreeEntriesMap returns a map from name to TreeEntry for quick lookups.
+func TreeEntriesMap(entries) (m) {
+    m = make(map[string]TreeEntry)
+    i := 0
+    while i < len(entries) {
+        m[entries[i].name] = entries[i]
+        i = i + 1
+    }
+}
+
+// TreeAtCommit returns the tree hash for a commit hash.
+func TreeAtCommit(hash) (tree) {
+    if hash == "" { tree = ""  return }
+    jsonStr := ReadObject(hash)
+    if jsonStr == "" { tree = ""  return }
+    c := parse(jsonStr, Obj{})
+    tree = c.tree
+}
+
+// ResolveShortHash converts a short hash prefix to the full 64-char hash.
+func ResolveShortHash(short) (full) {
+    full = ""
+    if len(short) == 64 { full = short  return }
+    if len(short) < 2 { return }
+    dir := LumeDir() + "/objects/" + substr(short, 0, 2)
+    files := list_dir(dir)
+    i := 0
+    prefix := substr(short, 2, len(short))
+    while i < len(files) {
+        f := files[i]
+        if has_prefix(f, prefix) {
+            full = substr(short, 0, 2) + f
+            return
+        }
+        i = i + 1
+    }
+}
+
+// CommitAtRef returns the commit hash a ref path points to.
+func CommitAtRef(refPath) (hash) {
+    hash = read_file(LumeDir() + "/" + refPath)
+    hash = trim(hash)
+}

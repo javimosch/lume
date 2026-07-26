@@ -1,0 +1,43 @@
+// lume index: SQLite-backed staging area inside .lume/index
+
+// IndexPath returns the SQLite index file path.
+func IndexPath() (p) { p = LumeDir() + "/index" }
+
+// OpenIndex opens the index database.
+func OpenIndex() (db) { db = sqlite_open(IndexPath()) }
+
+// InitIndexSchema creates the index table.
+func InitIndexSchema(db) {
+    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS idx (path TEXT PRIMARY KEY, mode TEXT, hash TEXT, mtime INTEGER, size INTEGER)")
+}
+
+// ResetIndex removes all staged entries.
+func ResetIndex(db) {
+    sqlite_exec(db, "DELETE FROM idx")
+}
+
+// AddIndexEntry stages a file into the index.
+func AddIndexEntry(db, path, mode, hash, mtime, size) {
+    sqlite_exec(db, "INSERT INTO idx (path, mode, hash, mtime, size) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET mode=excluded.mode, hash=excluded.hash, mtime=excluded.mtime, size=excluded.size", []string{path, mode, hash, str(mtime), str(size)})
+}
+
+// RemoveIndexEntry unstages a path.
+func RemoveIndexEntry(db, path) {
+    sqlite_exec(db, "DELETE FROM idx WHERE path = ?", []string{path})
+}
+
+// ListIndex returns all staged entries sorted by path.
+func ListIndex(db) (entries) {
+    rows := sqlite_query(db, "SELECT path, mode, hash, mtime, size FROM idx ORDER BY path")
+    entries = parse(rows, []IndexEntry{})
+}
+
+// IndexEntryMap returns a map from path to IndexEntry.
+func IndexEntryMap(entries) (m) {
+    m = make(map[string]IndexEntry)
+    i := 0
+    while i < len(entries) {
+        m[entries[i].path] = entries[i]
+        i = i + 1
+    }
+}
