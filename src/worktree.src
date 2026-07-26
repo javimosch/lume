@@ -1,11 +1,11 @@
 // lume worktree: scanning working tree files and computing hashes.
 
 // WorktreeFiles returns a list of file paths under the repo root,
-// excluding the .lume directory. Uses `find` for recursion.
+// excluding VCS, lume, common dependency/build directories, and files >= 1 MB.
 func WorktreeFiles(root) (files) {
     files = []string{}
     if root == "" { root = "." }
-    code, out, _ := exec("find " + root + " -type f -not -path '" + root + "/.lume/*' -print | sort")
+    code, out, _ := exec("find " + root + " -type f -size -1048576c -not -path '" + root + "/.git/*' -not -path '" + root + "/.lume/*' -not -path '" + root + "/node_modules/*' -not -path '" + root + "/dist/*' -not -path '" + root + "/.next/*' -not -path '" + root + "/target/*' -not -path '" + root + "/vendor/*' -not -path '" + root + "/build/*' -not -path '" + root + "/out/*' -not -path '" + root + "/coverage/*' -not -path '" + root + "/.cache/*' -print | sort")
     if code != 0 { return }
     lines := split(out, "\n")
     i := 0
