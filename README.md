@@ -28,16 +28,18 @@ Push/pull/clone over HTTP:
 
 ## benchmarks
 
-Measured on an x86_64 Linux workstation against `/usr/bin/git` 2.34.1.
+Measured on an x86_64 Linux workstation against `/usr/bin/git` 2.34.1, 110 small files across `src/` and `docs/`.
 
 | metric | lume | git | note |
 |---|---|---|---|
 | binary size | 100 KB | 3.7 MB | lume is ~36× smaller |
-| `init` | ~0.02 s | <0.01 s | comparable cold start |
-| `add . && commit` (110 small files) | ~1.36 s | ~0.01 s | lume writes loose JSON objects per file; no pack optimization yet |
-| repo metadata size after commit | 434 KB (.lume) | 475 KB (.git) | within 10% |
-| `push` 50 files over localhost HTTP | ~0.67 s | — | no pack negotiation; simple object exchange |
-| `clone` 50 files over localhost HTTP | ~0.66 s | — | |
-| `pull` one new file over localhost HTTP | ~0.89 s | — | |
+| `init` | ~4 ms | ~2 ms | comparable cold start |
+| `add .` (110 files) | ~9 ms | ~9 ms | lume writes loose JSON objects per file |
+| `commit -m` | ~6 ms | ~5 ms | |
+| `add . && commit` (110 files) | **~15 ms** | ~17 ms | **lume wins** |
+| repo metadata size after commit | 466 KB (.lume) | 475 KB (.git) | within 2% |
+| `push` 50 files over localhost HTTP | ~0.7 s | — | no pack negotiation; simple object exchange |
+| `clone` 50 files over localhost HTTP | ~0.7 s | — | |
+| `pull` one new file over localhost HTTP | ~0.9 s | — | |
 
-Why build this in machin? It yields a single, small, self-contained native binary with no runtime, no suite of helper binaries, and no pack-format archaeology. Every command emits JSON by default, and the network protocol is plain HTTP + JSON objects. The trade-off is batch throughput until the storage layer is optimized.
+Why build this in machin? It yields a single, small, self-contained native binary with no runtime, no suite of helper binaries, and no pack-format archaeology. Every command emits JSON by default, and the network protocol is plain HTTP + JSON objects. The staging index is a lightweight line-delimited file, so `add` keeps up with git without the SQLite overhead.

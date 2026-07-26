@@ -55,7 +55,7 @@ func CmdPull(remote, refName) (r) {
     ResetIndex(db)
     treeHash := TreeAtCommit(remoteHash)
     if treeHash != "" { IndexFromTree(db, treeHash) }
-    sqlite_close(db)
+    CloseIndex(db)
 
     if treeHash != "" { RestoreTree(currentTree, treeHash) }
 
@@ -98,7 +98,7 @@ func CmdClone(remote, dir, refName) (r) {
     mkdir(LumeDir() + "/refs/heads")
     db := OpenIndex()
     InitIndexSchema(db)
-    sqlite_close(db)
+    CloseIndex(db)
 
     // Fetch all refs and their objects so the clone is complete.
     i = 0
@@ -113,7 +113,7 @@ func CmdClone(remote, dir, refName) (r) {
     if treeHash != "" {
         db2 := OpenIndex()
         IndexFromTree(db2, treeHash)
-        sqlite_close(db2)
+        CloseIndex(db2)
         RestoreTree("", treeHash)
     }
     repoRoot = ""
@@ -237,17 +237,18 @@ func UpdateRemoteRef(baseUrl, name, hash) (ok) {
     if s == 201 { ok = 1 }
 }
 
-// IndexFromTree rebuilds the SQLite index from a tree object.
+// IndexFromTree rebuilds the index from a tree object.
 func IndexFromTree(db, treeHash) {
-    ResetIndex(db)
-    if treeHash == "" { return }
+    if treeHash == "" { ResetIndex(db); return }
     jsonStr := ReadObject(treeHash)
-    if jsonStr == "" { return }
+    if jsonStr == "" { ResetIndex(db); return }
     treeObj := parse(jsonStr, Obj{})
+    entries := []IndexEntry{}
     i := 0
     while i < len(treeObj.entries) {
         e := treeObj.entries[i]
-        AddIndexEntry(db, e.name, e.mode, e.hash, 0, 0)
+        entries = append(entries, IndexEntry{path: e.name, mode: e.mode, hash: e.hash, mtime: 0, size: 0})
         i = i + 1
     }
+    AddIndexEntries(db, entries)
 }

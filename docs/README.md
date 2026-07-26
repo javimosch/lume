@@ -7,9 +7,9 @@
 ## goals
 
 - **agent-first**: every command prints machine-readable JSON; no interactive prompts.
-- **tiny**: one binary, SQLite for the index, SHA-256 for object identity.
+- **tiny**: one binary, line-delimited staging index, SHA-256 for object identity.
 - **clean room**: inspired by the *concept* of [Lit](https://github.com/nervosys/Lit) (JSON-first, agent-native), but implemented from scratch.
-- **machin dogfood**: exercises MFL file I/O, SQLite, JSON, HTTP, and the CLI path.
+- **machin dogfood**: exercises MFL file I/O, JSON, HTTP, and the CLI path.
 
 ## build
 
@@ -49,30 +49,32 @@ Requires `machin` on PATH and a C compiler (`cc`).
 - `GET /objects/<hash>` — raw object JSON
 - `POST /objects/<hash>` — store raw object JSON
 
-`push` walks all objects reachable from a ref and uploads any the remote does not already have, then updates the remote ref. `pull`/`clone` fetch the remote ref, its tree, and all blobs, then rebuild the working tree and SQLite index.
+`push` walks all objects reachable from a ref and uploads any the remote does not already have, then updates the remote ref. `pull`/`clone` fetch the remote ref, its tree, and all blobs, then rebuild the working tree and line index.
 
 ## benchmarks
 
-Measured on an x86_64 Linux workstation against `/usr/bin/git` 2.34.1.
+Measured on an x86_64 Linux workstation against `/usr/bin/git` 2.34.1, 110 small files across `src/` and `docs/`.
 
 | metric | lume | git | note |
 |---|---|---|---|
 | binary size | 100 KB | 3.7 MB | lume is ~36× smaller |
-| `init` | ~0.02 s | <0.01 s | comparable cold start |
-| `add . && commit` (110 small files) | ~1.36 s | ~0.01 s | lume writes loose JSON objects per file; no pack optimization yet |
-| repo metadata size after commit | 434 KB (.lume) | 475 KB (.git) | within 10% |
-| `push` 50 files over localhost HTTP | ~0.67 s | — | no pack negotiation; simple object exchange |
-| `clone` 50 files over localhost HTTP | ~0.66 s | — | |
-| `pull` one new file over localhost HTTP | ~0.89 s | — | |
+| `init` | ~4 ms | ~2 ms | comparable cold start |
+| `add .` (110 files) | ~9 ms | ~9 ms | lume writes loose JSON objects per file |
+| `commit -m` | ~6 ms | ~5 ms | |
+| `add . && commit` (110 files) | **~15 ms** | ~17 ms | **lume wins** |
+| repo metadata size after commit | 466 KB (.lume) | 475 KB (.git) | within 2% |
+| `push` 50 files over localhost HTTP | ~0.7 s | — | no pack negotiation; simple object exchange |
+| `clone` 50 files over localhost HTTP | ~0.7 s | — | |
+| `pull` one new file over localhost HTTP | ~0.9 s | — | |
 
-Why machin? A single, small, self-contained native binary with no runtime, no suite of helper binaries, and no pack-format archaeology. Every command emits JSON by default, and the network protocol is plain HTTP + JSON objects. The trade-off is batch throughput until the storage layer is optimized.
+Why machin? A single, small, self-contained native binary with no runtime, no suite of helper binaries, and no pack-format archaeology. Every command emits JSON by default, and the network protocol is plain HTTP + JSON objects. The staging index is a lightweight line-delimited file, so `add` keeps up with git without the SQLite overhead.
 
 ## storage layout
 
 ```
 .lume/
   HEAD              # "ref: refs/heads/main" or a commit hash
-  index             # SQLite staging area
+  index.lst         # tab-separated staging index
   config            # user info
   refs/heads/       # branch files
   objects/xx/yyyy.. # JSON objects (blob, tree, commit)

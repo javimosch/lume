@@ -9,7 +9,7 @@ func CmdInit() (r) {
 
     db := OpenIndex()
     InitIndexSchema(db)
-    sqlite_close(db)
+    CloseIndex(db)
 
     // Initial empty config with user info.
     user := AuthorName()
@@ -28,40 +28,42 @@ func AuthorName() (name) {
 // CmdAdd stages one or more files or directories.
 // paths is the full args array; element [0] is the program, [1] is "add".
 func CmdAdd(paths) (r) {
+    entries := []IndexEntry{}
     db := OpenIndex()
     InitIndexSchema(db)
     i := 2
     while i < len(paths) {
         p := paths[i]
-        if p != "" { AddSinglePath(db, p) }
+        if p != "" { entries = AddSinglePath(p, entries) }
         i = i + 1
     }
-    sqlite_close(db)
+    AddIndexEntries(db, entries)
+    CloseIndex(db)
     r = make(map[string]string)
     r["ok"] = "true"
 }
 
-// AddSinglePath recursively stages a single path (file or directory).
-func AddSinglePath(db, path) {
+// AddSinglePath recursively stages a single path and appends index entries.
+func AddSinglePath(path, entries) (out) {
+    out = entries
     if DirExists(path) {
         files := WorktreeFiles(path)
         j := 0
         while j < len(files) {
-            StageFile(db, files[j])
+            out = append(out, StageFile(files[j]))
             j = j + 1
         }
     } else if FileExists(path) {
-        StageFile(db, path)
+        out = append(out, StageFile(path))
     }
 }
 
-// StageFile computes the blob hash and inserts/updates the index entry.
-func StageFile(db, path) {
+// StageFile computes the blob hash and returns an index entry.
+func StageFile(path) (e) {
     raw := read_file_bytes(path)
-    obj := Obj{otype: "blob", data: base64_encode_bytes(raw)}
-    hash := WriteObject(obj)
+    hash := WriteBlob(raw)
     size := len(raw)
-    AddIndexEntry(db, path, "100644", hash, 0, size)
+    e = IndexEntry{path: path, mode: "100644", hash: hash, mtime: 0, size: size}
 }
 
 // CmdStatus returns the working tree status.
@@ -69,7 +71,7 @@ func CmdStatus() (r) {
     db := OpenIndex()
     InitIndexSchema(db)
     r = BuildStatus(db)
-    sqlite_close(db)
+    CloseIndex(db)
 }
 
 // CmdCommit creates a commit from the current index.
@@ -77,7 +79,7 @@ func CmdCommit(message) (r) {
     db := OpenIndex()
     InitIndexSchema(db)
     entries := ListIndex(db)
-    sqlite_close(db)
+    CloseIndex(db)
 
     // Convert IndexEntry to TreeEntry for tree construction.
     treeEntries := []TreeEntry{}
@@ -173,18 +175,21 @@ func CmdCheckout(target) (r) {
 
     // Reset index to match the tree.
     db := OpenIndex()
-    ResetIndex(db)
     if treeHash != "" {
         jsonStr := ReadObject(treeHash)
         treeObj := parse(jsonStr, Obj{})
+        entries := []IndexEntry{}
         i := 0
         while i < len(treeObj.entries) {
             e := treeObj.entries[i]
-            AddIndexEntry(db, e.name, e.mode, e.hash, 0, 0)
+            entries = append(entries, IndexEntry{path: e.name, mode: e.mode, hash: e.hash, mtime: 0, size: 0})
             i = i + 1
         }
+        AddIndexEntries(db, entries)
+    } else {
+        ResetIndex(db)
     }
-    sqlite_close(db)
+    CloseIndex(db)
 
     r = make(map[string]string)
     r["ok"] = "true"

@@ -78,7 +78,7 @@ func ObjectPath(hash) (p) {
     p = LumeDir() + "/objects/" + substr(hash, 0, 2) + "/" + substr(hash, 2, len(hash))
 }
 
-// EnsureParentDir recursively creates parent directories for a file path.
+// EnsureParentDir recursively creates parent directories for a file path using exec.
 func EnsureParentDir(path) (ok) {
     ok = 0
     code, dir, _ := exec("dirname " + path)
@@ -93,7 +93,17 @@ func WriteObject(obj) (hash) {
     jsonStr := json(obj)
     hash = HashObject(jsonStr)
     path := ObjectPath(hash)
-    EnsureParentDir(path)
+    mkdir(LumeDir() + "/objects/" + substr(hash, 0, 2))
+    write_file_bytes(path, bytes(jsonStr))
+}
+
+// WriteBlob stores a blob's raw bytes and returns its hash.
+func WriteBlob(raw) (hash) {
+    b64 := base64_encode_bytes(raw)
+    jsonStr := "{\"otype\":\"blob\",\"data\":\"" + b64 + "\"}"
+    hash = HashObject(jsonStr)
+    path := ObjectPath(hash)
+    mkdir(LumeDir() + "/objects/" + substr(hash, 0, 2))
     write_file_bytes(path, bytes(jsonStr))
 }
 
@@ -107,8 +117,9 @@ func ReadObject(hash) (jsonStr) {
 // BlobFromPath reads a file and returns a blob Obj plus its hash.
 func BlobFromPath(path) (obj, hash) {
     raw := read_file_bytes(path)
-    obj = Obj{otype: "blob", data: base64_encode_bytes(raw)}
-    hash = WriteObject(obj)
+    b64 := base64_encode_bytes(raw)
+    obj = Obj{otype: "blob", data: b64}
+    hash = WriteBlob(raw)
 }
 
 // BlobToPath writes a blob's bytes to a file path, honoring repoRoot.

@@ -1,36 +1,78 @@
-// lume index: SQLite-backed staging area inside .lume/index
+// lume index: line-backed staging area inside .lume/index.lst
 
-// IndexPath returns the SQLite index file path.
-func IndexPath() (p) { p = LumeDir() + "/index" }
+// IndexPath returns the index list file path.
+func IndexPath() (p) { p = LumeDir() + "/index.lst" }
 
-// OpenIndex opens the index database.
-func OpenIndex() (db) { db = sqlite_open(IndexPath()) }
+// OpenIndex returns a dummy handle (kept for caller compatibility).
+func OpenIndex() (db) { db = 1 }
 
-// InitIndexSchema creates the index table.
+// CloseIndex is a no-op for the line index.
+func CloseIndex(db) {}
+
+// ReadIndexEntries reads the index file, returning an empty slice if missing.
+func ReadIndexEntries() (entries) {
+    data := read_file(IndexPath())
+    if data == "" { entries = []IndexEntry{}; return }
+    lines := split(data, "\n")
+    entries = []IndexEntry{}
+    i := 0
+    while i < len(lines) {
+        line := trim(lines[i])
+        if line != "" {
+            fields := split(line, "\t")
+            if len(fields) >= 5 {
+                entries = append(entries, IndexEntry{path: fields[0], mode: fields[1], hash: fields[2], mtime: parse_int(fields[3]), size: parse_int(fields[4])})
+            }
+        }
+        i = i + 1
+    }
+}
+
+// WriteIndexEntries writes the index entries as tab-separated lines.
+func WriteIndexEntries(entries) {
+    n := len(entries)
+    lines := []string{}
+    i := 0
+    while i < n {
+        e := entries[i]
+        lines = append(lines, e.path + "\t" + e.mode + "\t" + e.hash + "\t" + str(e.mtime) + "\t" + str(e.size))
+        i = i + 1
+    }
+    write_file_bytes(IndexPath(), bytes(join(lines, "\n")))
+}
+
+// InitIndexSchema ensures the index file exists and is empty.
 func InitIndexSchema(db) {
-    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS idx (path TEXT PRIMARY KEY, mode TEXT, hash TEXT, mtime INTEGER, size INTEGER)")
+    if read_file(IndexPath()) == "" { WriteIndexEntries([]IndexEntry{}) }
 }
 
 // ResetIndex removes all staged entries.
-func ResetIndex(db) {
-    sqlite_exec(db, "DELETE FROM idx")
+func ResetIndex(db) { WriteIndexEntries([]IndexEntry{}) }
+
+// AddIndexEntry stages a single file into the index.
+func AddIndexEntry(db, path, mode, hash, mtime, size) {
+    entries := ReadIndexEntries()
+    entries = append(entries, IndexEntry{path: path, mode: mode, hash: hash, mtime: mtime, size: size})
+    WriteIndexEntries(entries)
 }
 
-// AddIndexEntry stages a file into the index.
-func AddIndexEntry(db, path, mode, hash, mtime, size) {
-    sqlite_exec(db, "INSERT INTO idx (path, mode, hash, mtime, size) VALUES (?, ?, ?, ?, ?) ON CONFLICT(path) DO UPDATE SET mode=excluded.mode, hash=excluded.hash, mtime=excluded.mtime, size=excluded.size", []string{path, mode, hash, str(mtime), str(size)})
-}
+// AddIndexEntries replaces the index with a batch of entries.
+func AddIndexEntries(db, entries) { WriteIndexEntries(entries) }
 
 // RemoveIndexEntry unstages a path.
 func RemoveIndexEntry(db, path) {
-    sqlite_exec(db, "DELETE FROM idx WHERE path = ?", []string{path})
+    entries := ReadIndexEntries()
+    out := []IndexEntry{}
+    i := 0
+    while i < len(entries) {
+        if entries[i].path != path { out = append(out, entries[i]) }
+        i = i + 1
+    }
+    WriteIndexEntries(out)
 }
 
-// ListIndex returns all staged entries sorted by path.
-func ListIndex(db) (entries) {
-    rows := sqlite_query(db, "SELECT path, mode, hash, mtime, size FROM idx ORDER BY path")
-    entries = parse(rows, []IndexEntry{})
-}
+// ListIndex returns all staged entries.
+func ListIndex(db) (entries) { entries = ReadIndexEntries() }
 
 // IndexEntryMap returns a map from path to IndexEntry.
 func IndexEntryMap(entries) (m) {

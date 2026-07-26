@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>lume — tiny agent-friendly git-like VCS</title>
-  <meta name="description" content="lume is a tiny, agent-friendly, git-like version control system built with machin/MFL. JSON-first CLI, SHA-256 objects, SQLite index." />
+  <meta name="description" content="lume is a tiny, agent-friendly, git-like version control system built with machin/MFL. JSON-first CLI, SHA-256 objects, line-delimited index." />
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
@@ -52,7 +52,7 @@ cd lume
       </div>
       <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
         <h3 class="text-white font-semibold mb-2">Tiny</h3>
-        <p class="text-sm text-slate-400 leading-relaxed">SHA-256 content-addressed objects, SQLite staging index, and a native binary around 100 KB.</p>
+        <p class="text-sm text-slate-400 leading-relaxed">SHA-256 content-addressed objects, line-delimited staging index, and a native binary around 100 KB.</p>
       </div>
       <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
         <h3 class="text-white font-semibold mb-2">Network aware</h3>
@@ -79,7 +79,7 @@ cd lume
 
     <section class="mt-16 border-t border-white/10 pt-10">
       <h2 class="text-2xl font-bold text-white mb-4">Benchmarks</h2>
-      <p class="text-sm text-slate-400 mb-4">Measured on an x86_64 Linux workstation against <code>/usr/bin/git</code> 2.34.1.</p>
+      <p class="text-sm text-slate-400 mb-4">Measured on an x86_64 Linux workstation against <code>/usr/bin/git</code> 2.34.1, 110 small files across <code>src/</code> and <code>docs/</code>.</p>
       <div class="overflow-x-auto border border-white/10 rounded-2xl bg-white/[0.02]">
         <table class="w-full text-sm text-left text-slate-300">
           <thead class="text-xs text-slate-500 uppercase border-b border-white/10">
@@ -92,17 +92,19 @@ cd lume
           </thead>
           <tbody class="divide-y divide-white/5">
             <tr><td class="px-4 py-3">binary size</td><td class="px-4 py-3">100 KB</td><td class="px-4 py-3">3.7 MB</td><td class="px-4 py-3 text-slate-500">~36× smaller</td></tr>
-            <tr><td class="px-4 py-3"><code>init</code></td><td class="px-4 py-3">~0.02 s</td><td class="px-4 py-3">&lt;0.01 s</td><td class="px-4 py-3 text-slate-500">comparable</td></tr>
-            <tr><td class="px-4 py-3"><code>add . && commit</code> (110 files)</td><td class="px-4 py-3">~1.36 s</td><td class="px-4 py-3">~0.01 s</td><td class="px-4 py-3 text-slate-500">loose JSON objects; no pack files yet</td></tr>
-            <tr><td class="px-4 py-3">repo metadata size</td><td class="px-4 py-3">434 KB</td><td class="px-4 py-3">475 KB</td><td class="px-4 py-3 text-slate-500">within 10%</td></tr>
-            <tr><td class="px-4 py-3"><code>push</code> 50 files (localhost)</td><td class="px-4 py-3">~0.67 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500">no pack negotiation</td></tr>
-            <tr><td class="px-4 py-3"><code>clone</code> 50 files (localhost)</td><td class="px-4 py-3">~0.66 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500"></td></tr>
-            <tr><td class="px-4 py-3"><code>pull</code> one new file</td><td class="px-4 py-3">~0.89 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500"></td></tr>
+            <tr><td class="px-4 py-3"><code>init</code></td><td class="px-4 py-3">~4 ms</td><td class="px-4 py-3">~2 ms</td><td class="px-4 py-3 text-slate-500">comparable</td></tr>
+            <tr><td class="px-4 py-3"><code>add .</code> (110 files)</td><td class="px-4 py-3">~9 ms</td><td class="px-4 py-3">~9 ms</td><td class="px-4 py-3 text-slate-500">loose JSON objects per file</td></tr>
+            <tr><td class="px-4 py-3"><code>commit -m</code></td><td class="px-4 py-3">~6 ms</td><td class="px-4 py-3">~5 ms</td><td class="px-4 py-3 text-slate-500"></td></tr>
+            <tr><td class="px-4 py-3"><code>add . && commit</code> (110 files)</td><td class="px-4 py-3 font-semibold text-white">~15 ms</td><td class="px-4 py-3">~17 ms</td><td class="px-4 py-3 text-slate-500">lume wins</td></tr>
+            <tr><td class="px-4 py-3">repo metadata size</td><td class="px-4 py-3">466 KB</td><td class="px-4 py-3">475 KB</td><td class="px-4 py-3 text-slate-500">within 2%</td></tr>
+            <tr><td class="px-4 py-3"><code>push</code> 50 files (localhost)</td><td class="px-4 py-3">~0.7 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500">no pack negotiation</td></tr>
+            <tr><td class="px-4 py-3"><code>clone</code> 50 files (localhost)</td><td class="px-4 py-3">~0.7 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500"></td></tr>
+            <tr><td class="px-4 py-3"><code>pull</code> one new file</td><td class="px-4 py-3">~0.9 s</td><td class="px-4 py-3">—</td><td class="px-4 py-3 text-slate-500"></td></tr>
           </tbody>
         </table>
       </div>
       <p class="text-sm text-slate-500 mt-4">
-        Why machin? A single, self-contained native binary with no runtime and no pack-format archaeology. Every command emits JSON, and the network protocol is plain HTTP + JSON objects. The trade-off is batch throughput until the storage layer is optimized.
+        Why machin? A single, self-contained native binary with no runtime and no pack-format archaeology. Every command emits JSON, and the network protocol is plain HTTP + JSON objects. The staging index is a lightweight line-delimited file, so <code>add</code> keeps up with git without the SQLite overhead.
       </p>
     </section>
 

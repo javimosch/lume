@@ -52,8 +52,8 @@ echo "hello" > a.txt
 
 ## architecture
 
-- `core.src`   — object model, SHA-256 object store
-- `index.src`  — SQLite staging area
+- `core.src`   — object model, SHA-256 object store, `WriteBlob` fast path for blob JSON
+- `index.src`  — line-delimited (`index.lst`) staging area, batch writes
 - `refs.src`   — HEAD, branches, ref resolution
 - `worktree.src` — working-tree scanning via `find`/`test`
 - `status.src` — compare HEAD tree, index, and working tree
