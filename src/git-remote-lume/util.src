@@ -1,0 +1,297 @@
+// util.src - shared helpers for the MFL git-remote-lume helper.
+
+type BranchRef struct {
+    name string
+    hash string
+}
+
+type Info struct {
+    name    string
+    head    string
+    branch  string
+}
+
+type LumeEntry struct {
+    mode string
+    name string
+    hash string
+}
+
+type LumeObj struct {
+    otype     string
+    data      string
+    entries   []LumeEntry
+    tree      string
+    parent    string
+    author    string
+    timestamp int
+    message   string
+}
+
+type BlobObj struct {
+    otype string
+    data  string
+}
+
+type TreeObj struct {
+    otype   string
+    data    string
+    entries []LumeEntry
+}
+
+type CommitObj struct {
+    otype     string
+    data      string
+    entries   []LumeEntry
+    tree      string
+    parent    string
+    author    string
+    timestamp int
+    message   string
+}
+
+type DirChild struct {
+    name    string
+    mode    string
+    hash    string
+    is_tree int
+}
+
+var _args             = []string{}
+var _remote_refs_cache = []BranchRef{}
+var _lume_cache       = make(map[string]LumeObj)
+var _git_to_lume      = make(map[string]string)
+var _lume_to_git      = make(map[string]string)
+var _uploaded         = make(map[string]int)
+var _nul              = from_hex("00")
+var _empty_tree       = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+func alias() (a) {
+    a = "_"
+    if len(_args) > 1 { a = _args[1] }
+    a = replace(a, "/", "_")
+    a = replace(a, ":", "_")
+    a = replace(a, ".", "_")
+    if len(a) > 64 { a = substr(a, 0, 64) }
+    if a == "" { a = "_" }
+}
+
+func base_url() (u) {
+    u = ""
+    if len(_args) > 2 {
+        u = _args[2]
+    } else if len(_args) > 1 {
+        u = _args[1]
+    }
+    if has_prefix(u, "lume::") { u = substr(u, 6, len(u)) }
+    if !has_prefix(u, "http://") && !has_prefix(u, "https://") { u = "http://" + u }
+    if has_suffix(u, "/") { u = substr(u, 0, len(u)-1) }
+}
+
+func base_dir() (d) {
+    d = env("GIT_DIR")
+    if d == "" { d = "/tmp/lume-marks-" + alias() }
+}
+
+func marks_dir() (d) {
+    d = base_dir() + "/lume-marks"
+}
+
+func git_dir() (d) {
+    d = base_dir()
+    ensure_git_dir(d)
+}
+
+func ensure_git_dir(d) {
+    code, _, _ := exec("GIT_DIR=" + shell_quote(d) + " git rev-parse --git-dir >/dev/null 2>&1")
+    if code != 0 {
+        mkdir(d)
+        _, _, _ := exec("git init --bare " + shell_quote(d) + " >/dev/null 2>&1")
+    }
+}
+
+func shell_quote(s) (r) {
+    r = "'" + replace(s, "'", "'\"'\"'") + "'"
+}
+
+func git_run(cmd) (code, out, err) {
+    code, out, err = exec("GIT_DIR=" + shell_quote(git_dir()) + " " + cmd)
+}
+
+func file_exists(p) (ok) {
+    ok = false
+    code, _, _ := exec("test -f " + shell_quote(p))
+    if code == 0 { ok = true }
+}
+
+func lume_get(path) (body) {
+    u := base_url() + path
+    code, b, err := http_get(u)
+    if err != "" { fatal("http_get " + path + ": " + err) }
+    if code == 404 { body = ""  return }
+    if code != 200 { fatal("http_get " + path + " -> " + str(code) + ": " + b) }
+    body = b
+}
+
+func lume_post(path, data) {
+    u := base_url() + path
+    code, b, err := http_request("POST", u, []string{}, data)
+    if err != "" { fatal("http_post " + path + ": " + err) }
+    if code != 200 && code != 201 { fatal("http_post " + path + " -> " + str(code) + ": " + b) }
+}
+
+func lume_object_exists(h) (ok) {
+    ok = false
+    code, _, err := http_get(base_url() + "/objects/" + h)
+    if code == 200 && err == "" { ok = true }
+}
+
+func fetch_lume_object(h) (obj) {
+    if has(_lume_cache, h) { obj = _lume_cache[h]  return }
+    body := lume_get("/objects/" + h)
+    if body == "" { fatal("lume object not found: " + h) }
+    obj = parse(body, LumeObj{})
+    _lume_cache[h] = obj
+}
+
+func lume_hash(json_str) (h) {
+    h = sha256(json_str)
+}
+
+func lume_json_blob(b64) (s) {
+    s = json(BlobObj{otype: "blob", data: b64})
+}
+
+func lume_json_tree(entries) (s) {
+    s = json(TreeObj{otype: "tree", data: "", entries: entries})
+}
+
+func lume_json_commit(tree, parent, author, timestamp, msg) (s) {
+    empty := []LumeEntry{}
+    s = json(CommitObj{otype: "commit", data: "", entries: empty, tree: tree, parent: parent, author: author, timestamp: timestamp, message: msg})
+}
+
+func lume_upload(json_str) (h) {
+    h = lume_hash(json_str)
+    if has(_uploaded, h) { return }
+    if lume_object_exists(h) { _uploaded[h] = 1  return }
+    lume_post("/objects/" + h, json_str)
+    _uploaded[h] = 1
+}
+
+func load_marks() {
+    git_dir()
+    mkdir(marks_dir())
+    p1 := marks_dir() + "/git-to-lume.json"
+    p2 := marks_dir() + "/lume-to-git.json"
+    if file_exists(p1) { _git_to_lume = parse(read_file(p1), make(map[string]string)) }
+    if file_exists(p2) { _lume_to_git = parse(read_file(p2), make(map[string]string)) }
+}
+
+func save_marks() {
+    mkdir(marks_dir())
+    write_file(marks_dir() + "/git-to-lume.json", json(_git_to_lume))
+    write_file(marks_dir() + "/lume-to-git.json", json(_lume_to_git))
+}
+
+func write_temp(name, data) (p) {
+    p = marks_dir() + "/" + name
+    write_file(p, data)
+}
+
+func write_temp_bytes(name, data) (p) {
+    p = marks_dir() + "/" + name
+    write_file_bytes(p, data)
+}
+
+func sort_lume_entries(entries) (out) {
+    out = entries
+    n := len(out)
+    i := 1
+    while i < n {
+        j := i
+        while j > 0 && out[j-1].name > out[j].name {
+            tmp := out[j-1]
+            out[j-1] = out[j]
+            out[j] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+func sort_strings(ss) (out) {
+    out = ss
+    n := len(out)
+    i := 1
+    while i < n {
+        j := i
+        while j > 0 && out[j-1] > out[j] {
+            tmp := out[j-1]
+            out[j-1] = out[j]
+            out[j] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+func path_join(parts, n) (s) {
+    s = ""
+    i := 0
+    while i < n {
+        if parts[i] != "" {
+            if s == "" { s = parts[i] } else { s = s + "/" + parts[i] }
+        }
+        i = i + 1
+    }
+}
+
+func depth(p) (d) {
+    d = 0
+    if p == "" { return }
+    parts := split(p, "/")
+    d = len(parts)
+}
+
+func sort_by_depth(dirs) (out) {
+    out = dirs
+    n := len(out)
+    i := 1
+    while i < n {
+        j := i
+        while j > 0 && depth(out[j-1]) < depth(out[j]) {
+            tmp := out[j-1]
+            out[j-1] = out[j]
+            out[j] = tmp
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+func parse_author(a) (name, email) {
+    a = trim(a)
+    lt := index(a, "<")
+    gt := index(a, ">")
+    if lt > 0 && gt > lt {
+        name = trim(substr(a, 0, lt))
+        email = substr(a, lt+1, gt)
+    } else {
+        name = a
+        email = name + "@lume"
+    }
+}
+
+func env_cmd(k, v) (s) {
+    s = k + "=" + shell_quote(v)
+}
+
+func fatal(msg) {
+    system(">&2 echo " + shell_quote("git-remote-lume: " + msg))
+    exit(1)
+}
+
+func warn(msg) {
+    system(">&2 echo " + shell_quote("git-remote-lume: " + msg))
+}

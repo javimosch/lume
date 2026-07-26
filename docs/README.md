@@ -100,4 +100,4 @@ The helper translates git's SHA-1 objects into lume's JSON/SHA-256 objects on th
 - File type detection uses `find`/`test` via `exec` (Linux-oriented).
 - Author name is taken from `LUME_AUTHOR` or `USER` env.
 - Push currently overwrites the remote ref (no fast-forward check).
-- `git-remote-lume` is a Phase 2 Python prototype; it will be ported to MFL later.
+- `git-remote-lume` is a native MFL helper built by `./build-git-remote-lume.sh`.

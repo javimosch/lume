@@ -37,14 +37,14 @@ Establish the exact git remote-helper protocol surface and the object translatio
 
 It downloads a lume branch, converts JSON blobs/trees/commits into git loose objects, and writes them to `.git/objects`. `git clone lume::...` works for linear history with recursive directories.
 
-### Phase 2 — Push (done, Python prototype)
+### Phase 2 — Push (done)
 
 `git-remote-lume` supports:
 
 - `list for-push`
 - `push <src>:<dst>`
 
-It reads git objects with `git cat-file` / `git ls-tree`, converts them to lume JSON objects, uploads them to the lume server, and updates the remote ref. The current helper is a Python stdlib prototype that proves the protocol end-to-end; a native MFL port is Phase 5.
+It reads git objects with `git cat-file` / `git ls-tree`, converts them to lume JSON objects, uploads them to the lume server, and updates the remote ref.
 
 ### Phase 3 — Merge commits, tags, and shallow clones
 
@@ -58,9 +58,9 @@ It reads git objects with `git cat-file` / `git ls-tree`, converts them to lume 
 - Add `/have` endpoint for push negotiation.
 - Support `git push --force` and ref deletion.
 
-### Phase 5 — Ecosystem polish
+### Phase 5 — Ecosystem polish (MFL port done)
 
-- Port `git-remote-lume` from Python to MFL for a single small native helper.
+- ✅ Port `git-remote-lume` to MFL for a single small native helper (`./build-git-remote-lume.sh`).
 - `lume bundle` and `lume unbundle` for offline git bundles.
 - `lume import-git <repo>` to seed a lume server from an existing git repo.
 - Documentation and benchmarks against `git clone`/`git push` over HTTP.
@@ -88,7 +88,7 @@ When fetching, `git-remote-lume` creates git objects with `git hash-object -w --
 git client
     |
     v
-git-remote-lume  (Python stdlib prototype, MFL port in Phase 5)
+git-remote-lume  (MFL native helper, built by ./build-git-remote-lume.sh)
     |
     |-- exec git cat-file / git ls-tree / git mktree / git commit-tree
     |

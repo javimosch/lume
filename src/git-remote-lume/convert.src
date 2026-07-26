@@ -1,0 +1,214 @@
+// convert.src - translate between git SHA-1 objects and lume JSON/SHA-256 objects.
+
+func lume_tree_to_git(entries) (root_sha) {
+    if len(entries) == 0 {
+        root_sha = _empty_tree
+        return
+    }
+
+    dir_map := make(map[string]map[string]DirChild)
+    dir_map[""] = make(map[string]DirChild)
+
+    i := 0
+    while i < len(entries) {
+        e := entries[i]
+        parts := split(e.name, "/")
+        n := len(parts)
+
+        j := 0
+        while j < n - 1 {
+            dir := path_join(parts, j)
+            child := parts[j]
+            if !has(dir_map, dir) { dir_map[dir] = make(map[string]DirChild) }
+            children := dir_map[dir]
+            if !has(children, child) {
+                children[child] = DirChild{name: child, mode: "040000", hash: "", is_tree: 1}
+                dir_map[dir] = children
+            }
+            childpath := path_join(parts, j+1)
+            if !has(dir_map, childpath) { dir_map[childpath] = make(map[string]DirChild) }
+            j = j + 1
+        }
+
+        dir := path_join(parts, n-1)
+        child := parts[n-1]
+        if !has(dir_map, dir) { dir_map[dir] = make(map[string]DirChild) }
+        children := dir_map[dir]
+        gh := convert_lume_to_git(e.hash)
+        children[child] = DirChild{name: child, mode: e.mode, hash: gh, is_tree: 0}
+        dir_map[dir] = children
+
+        i = i + 1
+    }
+
+    dirs := []string{}
+    for d := range dir_map { dirs = append(dirs, d) }
+    dirs = sort_by_depth(dirs)
+
+    dir_hash := make(map[string]string)
+
+    i = 0
+    while i < len(dirs) {
+        d := dirs[i]
+        children_map := dir_map[d]
+        child_names := []string{}
+        for name := range children_map { child_names = append(child_names, name) }
+        child_names = sort_strings(child_names)
+
+        lines := []string{}
+        j := 0
+        while j < len(child_names) {
+            child_name := child_names[j]
+            c := children_map[child_name]
+            chash := c.hash
+            cmode := c.mode
+            ctype := "blob"
+            if c.is_tree == 1 {
+                ctype = "tree"
+                cmode = "040000"
+                childpath := d
+                if d == "" { childpath = child_name } else { childpath = d + "/" + child_name }
+                chash = dir_hash[childpath]
+            }
+            lines = append(lines, cmode + " " + ctype + " " + chash + "\t" + child_name)
+            j = j + 1
+        }
+
+        if len(lines) == 0 {
+            dir_hash[d] = _empty_tree
+        } else {
+            text := join(lines, "\n") + "\n"
+            fpath := write_temp("tree_" + d, text)
+            code, out, _ := git_run("git mktree < " + shell_quote(fpath))
+            if code != 0 { fatal("mktree failed: " + out) }
+            dir_hash[d] = trim(out)
+        }
+
+        i = i + 1
+    }
+
+    root_sha = dir_hash[""]
+}
+
+func convert_lume_to_git(lume_h) (sha) {
+    if lume_h == "" { return }
+    if has(_lume_to_git, lume_h) { sha = _lume_to_git[lume_h]  return }
+
+    obj := fetch_lume_object(lume_h)
+
+    if obj.otype == "blob" {
+        raw := base64_decode_bytes(obj.data)
+        fpath := write_temp_bytes("blob_" + lume_h, raw)
+        code, out, err := git_run("git hash-object -w -t blob " + shell_quote(fpath))
+        if code != 0 { fatal("hash-object blob failed: " + err) }
+        sha = trim(out)
+    } else if obj.otype == "tree" {
+        sha = lume_tree_to_git(obj.entries)
+    } else if obj.otype == "commit" {
+        tree_h := convert_lume_to_git(obj.tree)
+        parent_h := convert_lume_to_git(obj.parent)
+        name, email := parse_author(obj.author)
+        ts := obj.timestamp
+        msg := trim(obj.message)
+        msgfile := write_temp("msg_" + lume_h, msg)
+
+        cmd := "git commit-tree " + tree_h + " -F " + shell_quote(msgfile)
+        if parent_h != "" { cmd = cmd + " -p " + parent_h }
+
+        cmd = env_cmd("GIT_AUTHOR_NAME", name) + " " + env_cmd("GIT_AUTHOR_EMAIL", email) + " " + env_cmd("GIT_AUTHOR_DATE", str(ts) + " +0000") + " " + env_cmd("GIT_COMMITTER_NAME", name) + " " + env_cmd("GIT_COMMITTER_EMAIL", email) + " " + env_cmd("GIT_COMMITTER_DATE", str(ts) + " +0000") + " " + cmd
+
+        code, out, _ := git_run(cmd)
+        if code != 0 { fatal("commit-tree failed: " + out) }
+        sha = trim(out)
+    } else {
+        fatal("unknown lume object type: " + obj.otype)
+    }
+
+    _lume_to_git[lume_h] = sha
+    save_marks()
+}
+
+func convert_git_to_lume(sha) (lh) {
+    if sha == "" { return }
+    if has(_git_to_lume, sha) { lh = _git_to_lume[sha]  return }
+
+    code, t, _ := git_run("git cat-file -t " + sha)
+    if code != 0 { fatal("cat-file -t failed: " + t) }
+    t = trim(t)
+
+    if t == "blob" {
+        fpath := marks_dir() + "/gitblob_" + sha
+        code, _, _ := git_run("git cat-file -p " + sha + " > " + shell_quote(fpath))
+        if code != 0 { fatal("cat-file -p blob failed") }
+        raw := read_file_bytes(fpath)
+        b64 := base64_encode_bytes(raw)
+        json_str := lume_json_blob(b64)
+        lh = lume_upload(json_str)
+    } else if t == "tree" {
+        fpath := marks_dir() + "/gittree_" + sha
+        code, _, _ := git_run("git ls-tree -r -z " + sha + " > " + shell_quote(fpath))
+        if code != 0 { fatal("ls-tree failed") }
+        b := read_file_bytes(fpath)
+
+        entries := []LumeEntry{}
+        start := 0
+        while true {
+            i := bytes_index(b, _nul, start)
+            if i < 0 { break }
+            entry := bytes_str(bytes_sub(b, start, i))
+            start = i + 1
+            if len(entry) == 0 { continue }
+
+            parts := split(entry, "\t")
+            head := parts[0]
+            path := parts[1]
+            hp := split(head, " ")
+            gtype := hp[1]
+            if gtype == "commit" { continue }
+
+            lchild := convert_git_to_lume(hp[2])
+            entries = append(entries, LumeEntry{mode: hp[0], name: path, hash: lchild})
+        }
+
+        entries = sort_lume_entries(entries)
+        json_str := lume_json_tree(entries)
+        lh = lume_upload(json_str)
+    } else if t == "commit" {
+        code, tree, _ := git_run("git rev-parse " + sha + "^{tree}")
+        if code != 0 { fatal("rev-parse tree failed") }
+        tree = trim(tree)
+
+        code, plist, _ := git_run("git rev-list --parents -n 1 " + sha)
+        if code != 0 { fatal("rev-list failed") }
+        plist = trim(plist)
+        pparts := split(plist, " ")
+        parent_git := ""
+        if len(pparts) > 1 { parent_git = pparts[1] }
+        if len(pparts) > 2 { warn("merge commit " + sha + " has " + str(len(pparts)-1) + " parents; using first") }
+
+        fpath := marks_dir() + "/gitmeta_" + sha
+        code, _, _ := git_run("git log -1 --format=%an%x00%ae%x00%at%x00%B " + sha + " > " + shell_quote(fpath))
+        if code != 0 { fatal("git log failed") }
+        b := read_file_bytes(fpath)
+
+        i1 := bytes_index(b, _nul, 0)
+        i2 := bytes_index(b, _nul, i1+1)
+        i3 := bytes_index(b, _nul, i2+1)
+        name := bytes_str(bytes_sub(b, 0, i1))
+        email := bytes_str(bytes_sub(b, i1+1, i2))
+        ts_str := bytes_str(bytes_sub(b, i2+1, i3))
+        msg := trim(bytes_str(bytes_sub(b, i3+1, len(b))))
+
+        author := name + " <" + email + ">"
+        ltree := convert_git_to_lume(tree)
+        lparent := convert_git_to_lume(parent_git)
+        json_str := lume_json_commit(ltree, lparent, author, parse_int(ts_str), msg)
+        lh = lume_upload(json_str)
+    } else {
+        fatal("unknown git object type: " + t)
+    }
+
+    _git_to_lume[sha] = lh
+    _lume_to_git[lh] = sha
+    save_marks()
+}

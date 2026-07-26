@@ -26,9 +26,11 @@ Push/pull/clone over HTTP:
 ./lume clone http://host:8788 mycopy main  # clone a remote repo
 ```
 
-Or use it as a git remote with the included `git-remote-lume` helper:
+Or use it as a git remote with the included native `git-remote-lume` helper:
 
 ```sh
+./build-git-remote-lume.sh                # build git-remote-lume from MFL
+# ensure the lume directory is on your PATH, or copy git-remote-lume to ~/bin
 git remote add origin lume::http://rbm21:8788
 git push origin main
 git clone lume::http://rbm21:8788 mycopy

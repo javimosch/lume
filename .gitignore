@@ -1,5 +1,6 @@
 lume
 lume.mfl
+git-remote-lume.mfl
 .lume
 *.log
 *.db

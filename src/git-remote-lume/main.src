@@ -1,0 +1,164 @@
+// main.src - git remote-helper protocol loop.
+
+func remote_refs() (refs) {
+    if len(_remote_refs_cache) > 0 { refs = _remote_refs_cache  return }
+    body := lume_get("/refs")
+    if body == "" {
+        refs = []BranchRef{}
+    } else {
+        refs = parse(body, []BranchRef{})
+    }
+    _remote_refs_cache = refs
+}
+
+func remote_head_branch() (b) {
+    b = ""
+    body := lume_get("/info")
+    if body == "" { return }
+    info := parse(body, Info{})
+    b = info.branch
+}
+
+func say(s) {
+    println(s)
+    flush()
+}
+
+func do_capabilities() {
+    say("fetch")
+    say("push")
+    say("")
+}
+
+func git_ref_name(name) (r) {
+    r = name
+    if !has_prefix(name, "refs/") { r = "refs/heads/" + name }
+}
+
+func do_list(for_push) {
+    refs := remote_refs()
+    i := 0
+    while i < len(refs) {
+        gsha := convert_lume_to_git(refs[i].hash)
+        say(gsha + " " + git_ref_name(refs[i].name))
+        i = i + 1
+    }
+    if for_push == 0 {
+        head := remote_head_branch()
+        if head != "" { say("@refs/heads/" + head + " HEAD") }
+    }
+    say("")
+}
+
+func do_fetch(lines) {
+    i := 0
+    while i < len(lines) {
+        parts := split(lines[i], " ")
+        if len(parts) >= 3 {
+            ref := parts[2]
+            refs := remote_refs()
+            j := 0
+            while j < len(refs) {
+                if git_ref_name(refs[j].name) == ref {
+                    convert_lume_to_git(refs[j].hash)
+                    break
+                }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+    say("")
+}
+
+func do_push(lines) {
+    i := 0
+    while i < len(lines) {
+        line := trim(lines[i])
+        if !has_prefix(line, "push ") { i = i + 1  continue }
+
+        spec := trim(substr(line, 5, len(line)))
+        if has_prefix(spec, "+") { spec = substr(spec, 1, len(spec)) }
+
+        colon := index(spec, ":")
+        if colon < 0 {
+            say("error " + spec + " invalid refspec")
+            i = i + 1
+            continue
+        }
+
+        src := substr(spec, 0, colon)
+        dst := substr(spec, colon+1, len(spec))
+
+        code, src_sha, _ := git_run("git rev-parse " + src)
+        if code != 0 {
+            say("error " + dst + " could not resolve " + src)
+            i = i + 1
+            continue
+        }
+        src_sha = trim(src_sha)
+
+        lh := convert_git_to_lume(src_sha)
+
+        ref_name := dst
+        if has_prefix(ref_name, "refs/heads/") { ref_name = substr(ref_name, 11, len(ref_name)) }
+        if has_prefix(ref_name, "refs/tags/") { ref_name = substr(ref_name, 10, len(ref_name)) }
+
+        lume_post("/refs/" + ref_name, lh)
+        if has_prefix(dst, "refs/heads/") {
+            info := make(map[string]string)
+            info["branch"] = ref_name
+            lume_post("/info", json(info))
+        }
+        say("ok " + dst)
+        i = i + 1
+    }
+    say("")
+}
+
+func run() {
+    while true {
+        line := input()
+        if line == "" { break }
+        line = trim(line)
+        if line == "" { continue }
+
+        if line == "capabilities" {
+            do_capabilities()
+        } else if line == "list" {
+            do_list(0)
+        } else if line == "list for-push" {
+            do_list(1)
+        } else if has_prefix(line, "fetch ") {
+            batch := []string{line}
+            while true {
+                nxt := input()
+                if nxt == "" { break }
+                nxt = trim(nxt)
+                if nxt == "" { break }
+                batch = append(batch, nxt)
+            }
+            do_fetch(batch)
+            continue
+        } else if has_prefix(line, "push ") {
+            batch := []string{line}
+            while true {
+                nxt := input()
+                if nxt == "" { break }
+                nxt = trim(nxt)
+                if nxt == "" { break }
+                batch = append(batch, nxt)
+            }
+            do_push(batch)
+            continue
+        } else {
+            fatal("unknown command: " + line)
+        }
+    }
+}
+
+func main() {
+    _args = args()
+    load_marks()
+    run()
+}

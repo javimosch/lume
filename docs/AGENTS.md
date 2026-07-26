@@ -50,15 +50,16 @@ echo "hello" > a.txt
 ~/ai/lume/lume clone http://localhost:8788 /tmp/lume-copy main
 ```
 
-For git-remote smoke tests, put `git-remote-lume` on PATH and use the `lume::` transport:
+For git-remote smoke tests, build the helper and put the lume directory on PATH:
 
 ```sh
+cd ~/ai/lume && ./build-git-remote-lume.sh
+
 mkdir /tmp/lume-server && cd /tmp/lume-server
-~/ai/lume/lume init && ~/ai/lume/lume add . && ~/ai/lume/lume commit -m srv
-~/ai/lume/lume serve 8788 &
+~/ai/lume/lume init && ~/ai/lume/lume serve 8788 &
 
 mkdir /tmp/lume-git-client && cd /tmp/lume-git-client
-git init -q && echo "hello" > a.txt && git add . && git commit -q -m first
+git init -q && echo "hello" > a.txt && git add . && git commit -q -m first && git branch -M main
 PATH="$PATH:/path/to/lume" git remote add origin lume::http://localhost:8788
 PATH="$PATH:/path/to/lume" git push origin main
 PATH="$PATH:/path/to/lume" git clone lume::http://localhost:8788 /tmp/lume-git-copy
@@ -75,4 +76,4 @@ PATH="$PATH:/path/to/lume" git clone lume::http://localhost:8788 /tmp/lume-git-c
 - `server.src` — raw HTTP object server for push/pull/clone
 - `remote.src` — push, pull, clone client protocol
 - `main.src`   — CLI dispatch
-- `git-remote-lume` — Python remote-helper that makes lume a git remote (`lume::` transport)
+- `src/git-remote-lume/*.src` — MFL remote-helper that makes lume a git remote (`lume::` transport); built by `./build-git-remote-lume.sh`
