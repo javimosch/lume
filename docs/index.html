@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>lume — tiny agent-friendly git-like VCS</title>
+  <meta name="description" content="lume is a tiny, agent-friendly, git-like version control system built with machin/MFL. JSON-first CLI, SHA-256 objects, SQLite index." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    body { font-family: 'Geist', system-ui, sans-serif; }
+    .mono { font-family: 'SF Mono', 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-[#0a0a0b] text-slate-300 antialiased">
+  <main class="max-w-4xl mx-auto px-6 py-24">
+    <header class="space-y-6">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-white/10 bg-white/[0.02] text-xs text-slate-400">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        public beta
+      </div>
+      <h1 class="text-6xl md:text-7xl font-extrabold text-white tracking-tight">lume</h1>
+      <p class="text-xl text-slate-400 max-w-2xl leading-relaxed">
+        A tiny, agent-friendly, git-like version control system built with
+        <a href="https://github.com/javimosch/machin" class="text-slate-200 hover:text-white underline decoration-white/20 underline-offset-4">machin/MFL</a>.
+        Every command emits JSON. One small native binary.
+      </p>
+      <div class="flex flex-wrap gap-4 pt-4">
+        <a href="https://github.com/javimosch/lume" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white text-black font-semibold hover:bg-slate-200 transition">GitHub <span aria-hidden="true">→</span></a>
+        <a href="changelog.html" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/30 hover:text-white transition">Changelog <span aria-hidden="true">→</span></a>
+        <a href="https://github.com/javimosch/lume/blob/master/docs/README.md" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-white/10 text-slate-300 hover:border-white/30 hover:text-white transition">Docs <span aria-hidden="true">→</span></a>
+      </div>
+    </header>
+
+    <section class="mt-20 border border-white/10 rounded-2xl bg-white/[0.02] p-6 md:p-8">
+      <h2 class="text-sm uppercase tracking-wider text-slate-500 font-semibold mb-4">Install & Try</h2>
+      <pre class="mono text-sm bg-black/30 rounded-xl p-4 overflow-x-auto text-slate-300"><code>git clone https://github.com/javimosch/lume.git
+cd lume
+./build.sh
+./lume init
+./lume add .
+./lume commit -m "first"</code></pre>
+    </section>
+
+    <section class="mt-12 grid md:grid-cols-3 gap-4">
+      <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
+        <h3 class="text-white font-semibold mb-2">JSON-first</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">Every command prints machine-readable JSON. No interactive prompts. Built for agents and scripts.</p>
+      </div>
+      <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
+        <h3 class="text-white font-semibold mb-2">Tiny</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">SHA-256 content-addressed objects, SQLite staging index, and a native binary around 70 KB.</p>
+      </div>
+      <div class="border border-white/10 rounded-2xl p-6 bg-white/[0.02]">
+        <h3 class="text-white font-semibold mb-2">Network aware</h3>
+        <p class="text-sm text-slate-400 leading-relaxed">Built-in <code class="mono text-xs bg-white/10 px-1.5 py-0.5 rounded">serve</code>, <code class="mono text-xs bg-white/10 px-1.5 py-0.5 rounded">push</code>, <code class="mono text-xs bg-white/10 px-1.5 py-0.5 rounded">pull</code>, and <code class="mono text-xs bg-white/10 px-1.5 py-0.5 rounded">clone</code> commands for self-hosting.</p>
+      </div>
+    </section>
+
+    <section class="mt-16 border-t border-white/10 pt-10">
+      <h2 class="text-2xl font-bold text-white mb-4">Commands</h2>
+      <div class="grid md:grid-cols-2 gap-4 text-sm">
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">init</code><span class="text-slate-500">create a repository</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">add &lt;path&gt;</code><span class="text-slate-500">stage files recursively</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">status</code><span class="text-slate-500">working tree status as JSON</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">commit -m &lt;msg&gt;</code><span class="text-slate-500">create commit</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">log</code><span class="text-slate-500">history from HEAD</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">branch [name]</code><span class="text-slate-500">list or create branch</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">checkout &lt;target&gt;</code><span class="text-slate-500">switch branch or commit</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">serve</code><span class="text-slate-500">run the object server</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">push &lt;remote&gt; [ref]</code><span class="text-slate-500">upload objects and update ref</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">pull &lt;remote&gt; [ref]</code><span class="text-slate-500">download and fast-forward</span></div>
+        <div class="flex justify-between border-b border-white/5 py-3"><code class="mono text-slate-200">clone &lt;remote&gt; [dir]</code><span class="text-slate-500">create repo from remote</span></div>
+      </div>
+    </section>
+
+    <footer class="mt-20 text-sm text-slate-500 border-t border-white/10 pt-8">
+      Built with machin/MFL. Clean-room from the idea of Lit. Source on
+      <a href="https://github.com/javimosch/lume" class="text-slate-300 hover:text-white">GitHub</a>.
+    </footer>
+  </main>
+</body>
+</html>
