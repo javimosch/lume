@@ -7,7 +7,7 @@
 - **agent-first**: every command prints machine-readable JSON; no interactive prompts.
 - **tiny**: one binary, SQLite for the index, SHA-256 for object identity.
 - **clean room**: inspired by the *concept* of Lit, but implemented from scratch.
-- **machin dogfood**: exercises MFL file I/O, SQLite, JSON, and the HTTP-less CLI path.
+- **machin dogfood**: exercises MFL file I/O, SQLite, JSON, HTTP, and the CLI path.
 
 ## build
 
@@ -31,6 +31,23 @@ Requires `machin` on PATH and a C compiler (`cc`).
 | `show <target>` | show object JSON for a commit/tree/blob | `./lume show main` |
 | `cat-file <hash>` | dump raw object JSON | `./lume cat-file <hash>` |
 | `hash-object <path>` | compute blob hash without storing | `./lume hash-object file.txt` |
+| `serve [port]` | start an HTTP object server | `./lume serve 8788` |
+| `push <remote> [ref]` | upload a ref and its objects | `./lume push http://host:8788 main` |
+| `pull <remote> [ref]` | fast-forward from a remote ref | `./lume pull http://host:8788 main` |
+| `clone <remote> [dir] [ref]` | clone a remote repository | `./lume clone http://host:8788 mycopy main` |
+
+## network protocol
+
+`serve` runs a tiny HTTP server on the given port. Endpoints:
+
+- `GET /` or `/info` — repository metadata JSON
+- `GET /refs` — list branch names and hashes
+- `GET /refs/<name>` — text of the commit hash for a branch
+- `POST /refs/<name>` — update a branch to the hash in the request body
+- `GET /objects/<hash>` — raw object JSON
+- `POST /objects/<hash>` — store raw object JSON
+
+`push` walks all objects reachable from a ref and uploads any the remote does not already have, then updates the remote ref. `pull`/`clone` fetch the remote ref, its tree, and all blobs, then rebuild the working tree and SQLite index.
 
 ## storage layout
 
@@ -47,7 +64,7 @@ Objects are JSON and addressed by `sha256(json(object))`.
 
 ## limitations
 
-- No network protocol (no push/pull/clone over the wire).
 - No merge / rebase / diff implementation yet.
 - File type detection uses `find`/`test` via `exec` (Linux-oriented).
 - Author name is taken from `LUME_AUTHOR` or `USER` env.
+- Push currently overwrites the remote ref (no fast-forward check).

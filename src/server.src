@@ -1,0 +1,176 @@
+// lume server: minimal HTTP object exchange for push/pull/clone.
+
+type HttpRequest struct {
+    method string
+    path   string
+    body   string
+}
+
+type HttpResponse struct {
+    status string
+    ctype  string
+    body   string
+}
+
+// ServerPort returns the default port for `lume serve`.
+func ServerPort() (p) { p = env("LUME_PORT"); if p == "" { p = "8788" } }
+
+// CmdServe starts the HTTP object server.
+func CmdServe(port) {
+    if port == "" { port = ServerPort() }
+    msg := make(map[string]string)
+    msg["status"] = "serving"
+    msg["port"] = port
+    println(json(msg))
+    flush()
+    server := listen(parse_int(port))
+    for {
+        conn := accept(server)
+        go ServeConn(conn)
+    }
+}
+
+// ServeConn handles one HTTP connection.
+func ServeConn(conn) {
+    raw := ReadFullRequest(conn)
+    if raw == "" { close(conn)  return }
+    req := ParseRequest(raw)
+    res := HandleRequest(req)
+    write(conn, FormatResponse(res))
+    close(conn)
+}
+
+// ReadFullRequest reads headers and Content-Length body from a connection.
+func ReadFullRequest(conn) (raw) {
+    raw = read(conn)
+    sep := index(raw, "\r\n\r\n")
+    while sep < 0 {
+        chunk := read(conn)
+        if chunk == "" { break }
+        raw = raw + chunk
+        sep = index(raw, "\r\n\r\n")
+    }
+    if sep < 0 { return }
+    head := substr(raw, 0, sep)
+    cl := FindContentLength(head)
+    needed := sep + 4 + cl
+    while len(raw) < needed {
+        chunk := read(conn)
+        if chunk == "" { break }
+        raw = raw + chunk
+    }
+}
+
+// FindContentLength extracts Content-Length from a header block.
+func FindContentLength(head) (n) {
+    n = 0
+    lines := split(head, "\r\n")
+    i := 0
+    while i < len(lines) {
+        line := lines[i]
+        if has_prefix(to_lower(line), "content-length:") {
+            rest := trim(substr(line, 15, len(line)))
+            n = parse_int(rest)
+            return
+        }
+        i = i + 1
+    }
+}
+
+// ParseRequest builds an HttpRequest from raw HTTP text.
+func ParseRequest(raw) (req) {
+    sep := index(raw, "\r\n\r\n")
+    if sep < 0 { req = HttpRequest{}  return }
+    head := substr(raw, 0, sep)
+    body := substr(raw, sep + 4, len(raw))
+    nl := index(head, "\r\n")
+    if nl < 0 { nl = len(head) }
+    line := substr(head, 0, nl)
+    parts := split(line, " ")
+    m := ""
+    p := "/"
+    if len(parts) >= 2 {
+        m = parts[0]
+        p = parts[1]
+    }
+    qi := index(p, "?")
+    if qi >= 0 { p = substr(p, 0, qi) }
+    cl := FindContentLength(head)
+    if cl > 0 && cl < len(body) { body = substr(body, 0, cl) }
+    req = HttpRequest{method: m, path: p, body: body}
+}
+
+// HandleRequest routes a request to the lume object store.
+func HandleRequest(req) (res) {
+    p := req.path
+
+    if p == "/" || p == "/info" {
+        return ok_json(json(ServerInfo()))
+    }
+
+    if p == "/refs" && req.method == "GET" {
+        return ok_json(json(ListBranches()))
+    }
+
+    if has_prefix(p, "/refs/") && req.method == "GET" {
+        name := substr(p, 6, len(p))
+        hash := CommitAtRef("refs/heads/" + name)
+        if hash == "" { return not_found() }
+        return ok_text(hash)
+    }
+
+    if has_prefix(p, "/refs/") && req.method == "POST" {
+        name := substr(p, 6, len(p))
+        hash := trim(req.body)
+        WriteRef(name, hash)
+        body := make(map[string]string)
+        body["ref"] = name
+        body["hash"] = hash
+        return created(json(body))
+    }
+
+    if has_prefix(p, "/objects/") && req.method == "GET" {
+        hash := substr(p, 9, len(p))
+        obj := ReadObject(hash)
+        if obj == "" { return not_found() }
+        return ok_json(obj)
+    }
+
+    if has_prefix(p, "/objects/") && req.method == "POST" {
+        hash := substr(p, 9, len(p))
+        StoreRawObject(hash, trim(req.body))
+        body := make(map[string]string)
+        body["hash"] = hash
+        return created(json(body))
+    }
+
+    return not_found()
+}
+
+// FormatResponse serializes an HttpResponse to HTTP/1.1 text.
+func FormatResponse(res) (s) {
+    s = "HTTP/1.1 " + res.status + "\r\n"
+    s = s + "Content-Type: " + res.ctype + "\r\n"
+    s = s + "Content-Length: " + str(len(res.body)) + "\r\n"
+    s = s + "Connection: close\r\n\r\n" + res.body
+}
+
+func ok_text(body) (r) { r = HttpResponse{status: "200 OK", ctype: "text/plain; charset=utf-8", body: body} }
+func ok_json(body) (r) { r = HttpResponse{status: "200 OK", ctype: "application/json", body: body} }
+func created(body) (r) { r = HttpResponse{status: "201 Created", ctype: "application/json", body: body} }
+func not_found() (r) { r = HttpResponse{status: "404 Not Found", ctype: "text/plain", body: "not found"} }
+
+// ServerInfo returns basic repository metadata.
+func ServerInfo() (r) {
+    r = make(map[string]string)
+    r["name"] = "lume"
+    r["head"] = ResolveHead()
+    r["branch"] = CurrentBranchName()
+}
+
+// StoreRawObject writes a raw JSON object to the object store.
+func StoreRawObject(hash, jsonStr) {
+    path := ObjectPath(hash)
+    EnsureParentDir(path)
+    write_file_bytes(path, bytes(jsonStr))
+}

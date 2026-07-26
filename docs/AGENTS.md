@@ -33,6 +33,23 @@ echo "a" > a.txt
 ~/ai/lume/lume status
 ```
 
+For network smoke tests, start a server in one directory and push/clone from another:
+
+```sh
+mkdir /tmp/lume-server && cd /tmp/lume-server
+~/ai/lume/lume init
+~/ai/lume/lume add .
+~/ai/lume/lume commit -m "srv"
+~/ai/lume/lume serve 8788 &
+
+mkdir /tmp/lume-client && cd /tmp/lume-client
+~/ai/lume/lume init
+echo "hello" > a.txt
+~/ai/lume/lume add . && ~/ai/lume/lume commit -m "client"
+~/ai/lume/lume push http://localhost:8788 main
+~/ai/lume/lume clone http://localhost:8788 /tmp/lume-copy main
+```
+
 ## architecture
 
 - `core.src`   — object model, SHA-256 object store
@@ -41,4 +58,6 @@ echo "a" > a.txt
 - `worktree.src` — working-tree scanning via `find`/`test`
 - `status.src` — compare HEAD tree, index, and working tree
 - `commands.src` — init, add, commit, status, log, branch, checkout, show
+- `server.src` — raw HTTP object server for push/pull/clone
+- `remote.src` — push, pull, clone client protocol
 - `main.src`   — CLI dispatch

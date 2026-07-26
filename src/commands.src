@@ -216,7 +216,7 @@ func RestoreTree(currentTreeHash, targetTreeHash) {
     while i < len(currentEntries) {
         e := currentEntries[i]
         if !has(targetMap, e.name) {
-            remove(e.name)
+            remove(repoRoot + e.name)
         }
         i = i + 1
     }

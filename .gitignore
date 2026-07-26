@@ -1,5 +1,6 @@
 lume
 lume.mfl
+.lume
 *.log
 *.db
 .DS_Store

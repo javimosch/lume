@@ -1,0 +1,253 @@
+// lume remote: push, pull, clone over HTTP.
+
+// CmdPush uploads the local ref (and all reachable objects) to a remote server.
+func CmdPush(remote, refName) (r) {
+    if refName == "" { refName = CurrentBranchName() }
+    if refName == "" { Fatal("no local branch to push; checkout a branch first", 80) }
+
+    localHash := CommitAtRef("refs/heads/" + refName)
+    if localHash == "" { Fatal("local ref has no commit", 80) }
+
+    baseUrl := NormalizeRemote(remote)
+    objects := CollectReachableObjects(localHash)
+
+    i := 0
+    while i < len(objects) {
+        UploadObject(baseUrl, objects[i])
+        i = i + 1
+    }
+
+    UpdateRemoteRef(baseUrl, refName, localHash)
+
+    r = make(map[string]string)
+    r["ok"] = "true"
+    r["ref"] = refName
+    r["hash"] = localHash
+    r["objects"] = str(len(objects))
+}
+
+// CmdPull fetches a remote ref and fast-forwards the local repo.
+func CmdPull(remote, refName) (r) {
+    if refName == "" { refName = CurrentBranchName() }
+    if refName == "" { refName = "main" }
+
+    baseUrl := NormalizeRemote(remote)
+    remoteHash := RemoteRef(baseUrl, refName)
+    if remoteHash == "" { Fatal("remote ref not found: " + refName, 80) }
+
+    localHash := CommitAtRef("refs/heads/" + refName)
+    if localHash == remoteHash {
+        r = make(map[string]string)
+        r["ok"] = "true"
+        r["ref"] = refName
+        r["message"] = "already up to date"
+        return
+    }
+
+    localHash := CommitAtRef("refs/heads/" + refName)
+    currentTree := TreeAtCommit(localHash)
+
+    FetchCommitTree(baseUrl, remoteHash)
+    WriteRef(refName, remoteHash)
+    UpdateHead("refs/heads/" + refName, 1)
+
+    db := OpenIndex()
+    ResetIndex(db)
+    treeHash := TreeAtCommit(remoteHash)
+    if treeHash != "" { IndexFromTree(db, treeHash) }
+    sqlite_close(db)
+
+    if treeHash != "" { RestoreTree(currentTree, treeHash) }
+
+    r = make(map[string]string)
+    r["ok"] = "true"
+    r["ref"] = refName
+    r["hash"] = remoteHash
+}
+
+// CmdClone creates a new repo from a remote server.
+func CmdClone(remote, dir, refName) (r) {
+    baseUrl := NormalizeRemote(remote)
+    refs := RemoteRefs(baseUrl)
+    if len(refs) == 0 { Fatal("remote has no refs", 80) }
+
+    if refName == "" {
+        refName = refs[0].name
+        i := 0
+        while i < len(refs) {
+            if refs[i].name == "main" { refName = "main" }
+            i = i + 1
+        }
+    }
+
+    remoteHash := ""
+    i := 0
+    while i < len(refs) {
+        if refs[i].name == refName { remoteHash = refs[i].hash }
+        i = i + 1
+    }
+    if remoteHash == "" { Fatal("remote ref not found: " + refName, 80) }
+
+    if dir == "" { dir = refName }
+    _, _, _ := exec("mkdir -p " + dir)
+
+    // Initialize a fresh repo in the target directory via repoRoot.
+    repoRoot = dir + "/"
+    mkdir(LumeDir())
+    mkdir(LumeDir() + "/objects")
+    mkdir(LumeDir() + "/refs/heads")
+    db := OpenIndex()
+    InitIndexSchema(db)
+    sqlite_close(db)
+
+    // Fetch all refs and their objects so the clone is complete.
+    i = 0
+    while i < len(refs) {
+        FetchCommitTree(baseUrl, refs[i].hash)
+        WriteRef(refs[i].name, refs[i].hash)
+        i = i + 1
+    }
+
+    UpdateHead("refs/heads/" + refName, 1)
+    treeHash := TreeAtCommit(remoteHash)
+    if treeHash != "" {
+        db2 := OpenIndex()
+        IndexFromTree(db2, treeHash)
+        sqlite_close(db2)
+        RestoreTree("", treeHash)
+    }
+    repoRoot = ""
+
+    r = make(map[string]string)
+    r["ok"] = "true"
+    r["dir"] = dir
+    r["ref"] = refName
+    r["hash"] = remoteHash
+}
+
+// NormalizeRemote ensures the remote URL has no trailing slash.
+func NormalizeRemote(remote) (url) {
+    url = remote
+    if !has_prefix(url, "http://") && !has_prefix(url, "https://") {
+        url = "http://" + url
+    }
+    if charat(url, len(url)-1) == "/" {
+        url = substr(url, 0, len(url)-1)
+    }
+}
+
+// UploadObject sends a single object to the remote if it is not already present.
+func UploadObject(baseUrl, hash) (ok) {
+    url := baseUrl + "/objects/" + hash
+    status, _, _ := http_get(url)
+    if status == 200 { ok = 1  return }
+    jsonStr := ReadObject(hash)
+    if jsonStr == "" { ok = 0  return }
+    s, _, _ := http_request("POST", url, []string{}, jsonStr)
+    ok = 0
+    if s == 201 { ok = 1 }
+}
+
+// FetchObject downloads a single object from the remote and stores it locally.
+func FetchObject(baseUrl, hash) (ok) {
+    ok = 0
+    if hash == "" { return }
+    status, body, err := http_get(baseUrl + "/objects/" + hash)
+    if err != "" || status != 200 { return }
+    StoreRawObject(hash, trim(body))
+    ok = 1
+}
+
+// CollectReachableObjects returns all object hashes reachable from a commit hash.
+func CollectReachableObjects(commitHash) (hashes) {
+    hashes = []string{}
+    seen := make(map[string]int)
+    WalkObjects(commitHash, seen)
+    for k := range seen { hashes = append(hashes, k) }
+}
+
+// WalkObjects recursively marks commit/tree/blob hashes as reachable.
+func WalkObjects(hash, seen) {
+    if hash == "" || has(seen, hash) { return }
+    seen[hash] = 1
+    jsonStr := ReadObject(hash)
+    if jsonStr == "" { return }
+    obj := parse(jsonStr, Obj{})
+    if obj.otype == "commit" {
+        WalkObjects(obj.tree, seen)
+        WalkObjects(obj.parent, seen)
+    }
+    if obj.otype == "tree" {
+        i := 0
+        while i < len(obj.entries) {
+            WalkObjects(obj.entries[i].hash, seen)
+            i = i + 1
+        }
+    }
+}
+
+// FetchCommitTree fetches a commit, its tree, and all blobs recursively.
+func FetchCommitTree(baseUrl, commitHash) {
+    seen := make(map[string]int)
+    FetchObjects(baseUrl, commitHash, seen)
+}
+
+// FetchObjects recursively fetches a commit/tree/blob and its children.
+func FetchObjects(baseUrl, hash, seen) {
+    if hash == "" || has(seen, hash) { return }
+    seen[hash] = 1
+    if ReadObject(hash) != "" { return }
+    FetchObject(baseUrl, hash)
+    jsonStr := ReadObject(hash)
+    if jsonStr == "" { return }
+    obj := parse(jsonStr, Obj{})
+    if obj.otype == "commit" {
+        FetchObjects(baseUrl, obj.tree, seen)
+        FetchObjects(baseUrl, obj.parent, seen)
+    }
+    if obj.otype == "tree" {
+        i := 0
+        while i < len(obj.entries) {
+            FetchObjects(baseUrl, obj.entries[i].hash, seen)
+            i = i + 1
+        }
+    }
+}
+
+// RemoteRef returns the commit hash for a named remote ref.
+func RemoteRef(baseUrl, name) (hash) {
+    _, body, err := http_get(baseUrl + "/refs/" + name)
+    if err != "" { hash = ""  return }
+    hash = trim(body)
+}
+
+// RemoteRefs returns the list of remote refs.
+func RemoteRefs(baseUrl) (refs) {
+    refs = []BranchRef{}
+    status, body, err := http_get(baseUrl + "/refs")
+    if err != "" || status != 200 { return }
+    refs = parse(body, []BranchRef{})
+}
+
+// UpdateRemoteRef sets a named ref on the remote server.
+func UpdateRemoteRef(baseUrl, name, hash) (ok) {
+    url := baseUrl + "/refs/" + name
+    s, _, _ := http_request("POST", url, []string{}, hash)
+    ok = 0
+    if s == 201 { ok = 1 }
+}
+
+// IndexFromTree rebuilds the SQLite index from a tree object.
+func IndexFromTree(db, treeHash) {
+    ResetIndex(db)
+    if treeHash == "" { return }
+    jsonStr := ReadObject(treeHash)
+    if jsonStr == "" { return }
+    treeObj := parse(jsonStr, Obj{})
+    i := 0
+    while i < len(treeObj.entries) {
+        e := treeObj.entries[i]
+        AddIndexEntry(db, e.name, e.mode, e.hash, 0, 0)
+        i = i + 1
+    }
+}

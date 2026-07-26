@@ -3,10 +3,13 @@
 // Objects are stored as JSON and content-addressed by SHA-256 of that JSON.
 // Kinds: blob, tree, commit.
 
+var repoRoot = ""
+
 // LumeDir returns the path to the lume meta directory (currently CWD only).
-func LumeDir() (s) { s = ".lume" }
+func LumeDir() (s) { if repoRoot == "" { s = ".lume" } else { s = repoRoot + ".lume" } }
 
 // Object types used for JSON round-trips.
+
 type TreeEntry struct {
     mode string
     name string
@@ -108,13 +111,14 @@ func BlobFromPath(path) (obj, hash) {
     hash = WriteObject(obj)
 }
 
-// BlobToPath writes a blob's bytes to a file path.
+// BlobToPath writes a blob's bytes to a file path, honoring repoRoot.
 func BlobToPath(obj, path) (ok) {
     ok = -1
     if obj.otype != "blob" { return }
     raw := base64_decode_bytes(obj.data)
-    EnsureParentDir(path)
-    ok = write_file_bytes(path, raw)
+    full := repoRoot + path
+    EnsureParentDir(full)
+    ok = write_file_bytes(full, raw)
 }
 
 // TreeFromEntries builds a tree Obj from a slice of index/tree entries.
