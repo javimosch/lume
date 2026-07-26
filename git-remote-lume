@@ -1,0 +1,494 @@
+#!/usr/bin/env python3
+"""git-remote-lume - teach git to push to and pull from a lume HTTP server.
+
+Phase 2 prototype: linear history only. Merge commits are rejected with a
+warning (phase 3 of docs/VISION.md).
+
+Usage:
+    git remote add origin lume::http://localhost:8788
+    git push origin main
+    git clone lume::http://localhost:8788 my-copy
+"""
+
+import base64
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+
+def eprint(msg):
+    print(msg, file=sys.stderr)
+
+
+def alias():
+    a = sys.argv[1] if len(sys.argv) > 1 else "_"
+    a = re.sub(r"[^a-zA-Z0-9_-]", "_", a)[:64]
+    if not a:
+        a = "_"
+    return a
+
+
+def base_url():
+    url = sys.argv[2] if len(sys.argv) > 2 else sys.argv[1] if len(sys.argv) > 1 else ""
+    if url.startswith("lume::"):
+        url = url[6:]
+    if not (url.startswith("http://") or url.startswith("https://")):
+        url = "http://" + url
+    return url.rstrip("/")
+
+
+def git_dir():
+    return os.environ.get("GIT_DIR", ".git")
+
+
+def marks_dir():
+    d = os.path.join(git_dir(), "lume-marks", alias())
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def marks_path(name):
+    return os.path.join(marks_dir(), name)
+
+
+def load_marks():
+    global _git_to_lume, _lume_to_git
+    try:
+        with open(marks_path("git-to-lume.json")) as f:
+            _git_to_lume = json.load(f)
+    except Exception:
+        _git_to_lume = {}
+    try:
+        with open(marks_path("lume-to-git.json")) as f:
+            _lume_to_git = json.load(f)
+    except Exception:
+        _lume_to_git = {}
+
+
+def save_marks():
+    with open(marks_path("git-to-lume.json"), "w") as f:
+        json.dump(_git_to_lume, f)
+    with open(marks_path("lume-to-git.json"), "w") as f:
+        json.dump(_lume_to_git, f)
+
+
+def git_run(args, data=None, binary=False, extra_env=None):
+    """Run a git subcommand and return stdout."""
+    env = os.environ.copy()
+    env["GIT_DIR"] = git_dir()
+    if extra_env:
+        for k, v in extra_env.items():
+            env[k] = v
+    kwargs = {"env": env, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
+    if binary:
+        kwargs["text"] = False
+        kwargs["input"] = data
+    else:
+        kwargs["text"] = True
+        kwargs["encoding"] = "utf-8"
+        kwargs["errors"] = "surrogateescape"
+        kwargs["input"] = data if data is not None else None
+    r = subprocess.run(["git"] + args, **kwargs)
+    if r.returncode != 0:
+        err = r.stderr.decode("utf-8", "replace") if binary else r.stderr
+        raise RuntimeError(f"git {' '.join(args)} failed: {err}")
+    return r.stdout
+
+
+def http(method, path, data=None):
+    url = base_url() + path
+    if method == "GET":
+        req = urllib.request.Request(url, method="GET")
+    else:
+        body = data if isinstance(data, bytes) else data.encode("utf-8") if data else b""
+        req = urllib.request.Request(url, data=body, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            code = resp.getcode()
+            body = resp.read()
+            try:
+                return code, body.decode("utf-8")
+            except UnicodeDecodeError:
+                return code, body
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"lume request failed: {e}")
+
+
+def lume_get(path):
+    code, body = http("GET", path)
+    if code == 404:
+        return "", body
+    if code >= 300:
+        raise RuntimeError(f"lume GET {path} -> {code}")
+    return body
+
+
+def lume_post(path, data):
+    code, body = http("POST", path, data)
+    if code not in (200, 201):
+        raise RuntimeError(f"lume POST {path} -> {code}: {body}")
+    return body
+
+
+def lume_object_exists(h):
+    code, _ = http("GET", f"/objects/{h}")
+    return code == 200
+
+
+_lume_cache = {}
+
+
+def fetch_lume_object(h):
+    if h in _lume_cache:
+        return _lume_cache[h]
+    body = lume_get(f"/objects/{h}")
+    if not body:
+        raise RuntimeError(f"lume object not found: {h}")
+    obj = json.loads(body)
+    _lume_cache[h] = obj
+    return obj
+
+
+def lume_hash(json_str):
+    return hashlib.sha256(json_str.encode("utf-8")).hexdigest()
+
+
+def lume_json_blob(b64):
+    return json.dumps({"otype": "blob", "data": b64}, separators=(",", ":"))
+
+
+def lume_json_tree(entries):
+    return json.dumps({"otype": "tree", "data": "", "entries": entries},
+                      separators=(",", ":"))
+
+
+def lume_json_commit(tree, parent, author, ts, msg):
+    return json.dumps({
+        "otype": "commit",
+        "data": "",
+        "entries": [],
+        "tree": tree,
+        "parent": parent,
+        "author": author,
+        "timestamp": ts,
+        "message": msg,
+    }, separators=(",", ":"))
+
+
+def lume_upload(json_str):
+    h = lume_hash(json_str)
+    if h in _lume_to_git or lume_object_exists(h):
+        return h
+    lume_post(f"/objects/{h}", json_str)
+    return h
+
+
+def write_temp(name, data, binary=False):
+    p = marks_path(name)
+    mode = "wb" if binary else "w"
+    with open(p, mode) as f:
+        f.write(data)
+    return p
+
+
+def parse_author(a):
+    a = a.strip()
+    lt = a.rfind("<")
+    gt = a.find(">", lt)
+    if lt > 0 and gt > lt:
+        name = a[:lt].strip()
+        email = a[lt + 1:gt].strip()
+    else:
+        name = a
+        email = f"{name}@lume"
+    return name, email
+
+
+class TreeNode:
+    __slots__ = ("children", "mode", "lume_hash", "git_sha")
+
+    def __init__(self):
+        self.children = {}
+        self.mode = None
+        self.lume_hash = None
+        self.git_sha = None
+
+
+def lume_tree_to_git(entries):
+    """Build a recursive git tree from lume's flat path list."""
+    root = TreeNode()
+    for e in entries:
+        parts = e["name"].split("/")
+        node = root
+        for part in parts[:-1]:
+            if part not in node.children:
+                node.children[part] = TreeNode()
+            node = node.children[part]
+        last = parts[-1]
+        if last not in node.children:
+            node.children[last] = TreeNode()
+        leaf = node.children[last]
+        leaf.mode = e["mode"]
+        leaf.lume_hash = e["hash"]
+
+    def build(node):
+        if node.git_sha:
+            return node.git_sha
+        if not node.children:
+            if node.lume_hash:
+                node.git_sha = convert_lume_to_git(node.lume_hash)
+            else:
+                node.git_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            return node.git_sha
+        lines = []
+        for name, child in sorted(node.children.items()):
+            child_sha = build(child)
+            if child.children:
+                mode, gtype = "040000", "tree"
+            else:
+                mode = child.mode or "100644"
+                gtype = "blob"
+            lines.append(f"{mode} {gtype} {child_sha}\t{name}")
+        if not lines:
+            node.git_sha = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            return node.git_sha
+        text = "\n".join(lines) + "\n"
+        node.git_sha = git_run(["mktree"], data=text).strip()
+        return node.git_sha
+
+    return build(root)
+
+
+def convert_lume_to_git(lume_h):
+    """Recursively convert a lume object to a git object."""
+    if not lume_h:
+        return ""
+    if lume_h in _lume_to_git:
+        return _lume_to_git[lume_h]
+    obj = fetch_lume_object(lume_h)
+    otype = obj.get("otype")
+    if otype == "blob":
+        raw = base64.b64decode(obj["data"])
+        fpath = write_temp(f"blob_{lume_h}", raw, binary=True)
+        sha = git_run(["hash-object", "-w", "-t", "blob", fpath]).strip()
+    elif otype == "tree":
+        sha = lume_tree_to_git(obj.get("entries", []))
+    elif otype == "commit":
+        tree_h = convert_lume_to_git(obj.get("tree", ""))
+        parent_h = convert_lume_to_git(obj.get("parent", ""))
+        name, email = parse_author(obj.get("author", "lume"))
+        ts = obj.get("timestamp", 0)
+        msg = obj.get("message", "")
+        msgfile = write_temp(f"msg_{lume_h}", msg)
+        args = ["commit-tree", tree_h, "-F", msgfile]
+        if parent_h:
+            args += ["-p", parent_h]
+        env_extra = {
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_AUTHOR_DATE": f"{ts} +0000",
+            "GIT_COMMITTER_NAME": name,
+            "GIT_COMMITTER_EMAIL": email,
+            "GIT_COMMITTER_DATE": f"{ts} +0000",
+        }
+        sha = git_run(args, extra_env=env_extra).strip()
+    else:
+        raise RuntimeError(f"unknown lume object type: {otype}")
+    _lume_to_git[lume_h] = sha
+    save_marks()
+    return sha
+
+
+def convert_git_to_lume(git_h):
+    """Recursively convert a git object to a lume object and upload."""
+    if not git_h:
+        return ""
+    if git_h in _git_to_lume:
+        return _git_to_lume[git_h]
+    obj_type = git_run(["cat-file", "-t", git_h]).strip()
+    if obj_type == "blob":
+        raw = git_run(["cat-file", "-p", git_h], binary=True)
+        b64 = base64.b64encode(raw).decode("ascii")
+        json_str = lume_json_blob(b64)
+        lume_h = lume_upload(json_str)
+    elif obj_type == "tree":
+        entries = []
+        raw = git_run(["ls-tree", "-r", "-z", git_h], binary=False)
+        for entry in raw.split("\x00"):
+            entry = entry.strip()
+            if not entry:
+                continue
+            head, path = entry.split("\t", 1)
+            parts = head.split(" ")
+            mode, gtype, sha = parts[0], parts[1], parts[2]
+            if gtype == "commit":
+                continue
+            lchild = convert_git_to_lume(sha)
+            entries.append({"mode": mode, "name": path, "hash": lchild})
+        entries.sort(key=lambda x: x["name"])
+        json_str = lume_json_tree(entries)
+        lume_h = lume_upload(json_str)
+    elif obj_type == "commit":
+        tree_h = git_run(["rev-parse", f"{git_h}^{{tree}}"]).strip()
+        parents_line = git_run(["rev-list", "--parents", "-n", "1", git_h]).strip()
+        parents = parents_line.split(" ")[1:]
+        if len(parents) > 1:
+            eprint(f"warning: merge commit {git_h} has {len(parents)} parents; using first")
+        parent_git = parents[0] if parents else ""
+        meta = git_run(["log", "-1", "--format=%an%x00%ae%x00%at%x00%B", git_h], binary=False)
+        parts = meta.split("\x00", 3)
+        name, email, ts_str = parts[0], parts[1], parts[2]
+        msg = parts[3] if len(parts) > 3 else ""
+        author = f"{name} <{email}>"
+        ltree = convert_git_to_lume(tree_h)
+        lparent = convert_git_to_lume(parent_git)
+        json_str = lume_json_commit(ltree, lparent, author, int(ts_str), msg)
+        lume_h = lume_upload(json_str)
+    else:
+        raise RuntimeError(f"unknown git object type: {obj_type}")
+    _git_to_lume[git_h] = lume_h
+    _lume_to_git[lume_h] = git_h
+    save_marks()
+    return lume_h
+
+
+def remote_refs():
+    """Return list of (refname, lume_hash) for remote branches."""
+    body = lume_get("/refs")
+    if not body:
+        return []
+    refs = json.loads(body)
+    out = []
+    for r in refs:
+        name = r["name"]
+        if not name.startswith("refs/"):
+            name = "refs/heads/" + name
+        out.append((name, r["hash"]))
+    return out
+
+
+def remote_head_branch():
+    try:
+        info = json.loads(lume_get("/info"))
+        return info.get("branch", "")
+    except Exception:
+        return ""
+
+
+def do_capabilities():
+    print("fetch")
+    print("push")
+    print()
+
+
+def do_list(for_push=False):
+    refs = remote_refs()
+    head_branch = remote_head_branch()
+    for ref, lhash in refs:
+        ghash = convert_lume_to_git(lhash)
+        print(f"{ghash} {ref}")
+    if not for_push and head_branch:
+        print(f"@refs/heads/{head_branch} HEAD")
+    elif not for_push and refs:
+        print(f"@{refs[0][0]} HEAD")
+    print()
+
+
+def do_fetch(lines):
+    for line in lines:
+        parts = line.split(" ")
+        if len(parts) < 3:
+            continue
+        ref = parts[2]
+        # Find lume hash by ref name; converting ensures object exists.
+        for rname, lhash in remote_refs():
+            if rname == ref:
+                convert_lume_to_git(lhash)
+                break
+    print()
+
+
+def do_push(lines):
+    outputs = []
+    for line in lines:
+        line = line.strip()
+        if not line.startswith("push "):
+            continue
+        spec = line[5:].strip()
+        force = spec.startswith("+")
+        if force:
+            spec = spec[1:]
+        if ":" not in spec:
+            outputs.append(f"error {spec} invalid refspec")
+            continue
+        src, dst = spec.split(":", 1)
+        try:
+            src_sha = git_run(["rev-parse", src]).strip()
+            lume_h = convert_git_to_lume(src_sha)
+            # dst name without refs/heads/ prefix for lume server
+            ref_name = dst
+            if ref_name.startswith("refs/heads/"):
+                ref_name = ref_name[11:]
+            if ref_name.startswith("refs/tags/"):
+                ref_name = ref_name[10:]
+            lume_post(f"/refs/{ref_name}", lume_h)
+            outputs.append(f"ok {dst}")
+        except Exception as e:
+            outputs.append(f"error {dst} {e}")
+    for o in outputs:
+        print(o)
+    print()
+
+
+def main():
+    load_marks()
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        line = line.rstrip("\n")
+        if not line:
+            break
+        if line == "capabilities":
+            do_capabilities()
+        elif line == "list":
+            do_list(for_push=False)
+        elif line == "list for-push":
+            do_list(for_push=True)
+        elif line == "fetch":
+            # not used in batch mode, but handle single-line
+            do_fetch([line])
+        elif line.startswith("fetch "):
+            # batch of fetch lines
+            lines = [line]
+            while True:
+                n = sys.stdin.readline()
+                if not n or n == "\n":
+                    break
+                lines.append(n.rstrip("\n"))
+            do_fetch(lines)
+        elif line == "push":
+            do_push([])
+        elif line.startswith("push "):
+            lines = [line]
+            while True:
+                n = sys.stdin.readline()
+                if not n or n == "\n":
+                    break
+                lines.append(n.rstrip("\n"))
+            do_push(lines)
+        else:
+            eprint(f"unknown command: {line}")
+            sys.exit(1)
+        sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()

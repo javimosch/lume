@@ -82,9 +82,22 @@ Why machin? A single, small, self-contained native binary with no runtime, no su
 
 Objects are JSON and addressed by `sha256(json(object))`.
 
+## git compatibility
+
+`git-remote-lume` lets you use lume as a git remote. Put `git-remote-lume` on `PATH` (or `~/bin`) and use the `lume::` transport:
+
+```sh
+git remote add origin lume::http://rbm21:8788
+git push origin main
+git clone lume::http://rbm21:8788 mycopy
+```
+
+The helper translates git's SHA-1 objects into lume's JSON/SHA-256 objects on the fly. It supports linear history (blob/tree/commit) with recursive directories. Merge commits, tags, and shallow clones are on the roadmap (see `docs/VISION.md`).
+
 ## limitations
 
 - No merge / rebase / diff implementation yet.
 - File type detection uses `find`/`test` via `exec` (Linux-oriented).
 - Author name is taken from `LUME_AUTHOR` or `USER` env.
 - Push currently overwrites the remote ref (no fast-forward check).
+- `git-remote-lume` is a Phase 2 Python prototype; it will be ported to MFL later.

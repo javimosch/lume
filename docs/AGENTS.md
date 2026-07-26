@@ -50,6 +50,20 @@ echo "hello" > a.txt
 ~/ai/lume/lume clone http://localhost:8788 /tmp/lume-copy main
 ```
 
+For git-remote smoke tests, put `git-remote-lume` on PATH and use the `lume::` transport:
+
+```sh
+mkdir /tmp/lume-server && cd /tmp/lume-server
+~/ai/lume/lume init && ~/ai/lume/lume add . && ~/ai/lume/lume commit -m srv
+~/ai/lume/lume serve 8788 &
+
+mkdir /tmp/lume-git-client && cd /tmp/lume-git-client
+git init -q && echo "hello" > a.txt && git add . && git commit -q -m first
+PATH="$PATH:/path/to/lume" git remote add origin lume::http://localhost:8788
+PATH="$PATH:/path/to/lume" git push origin main
+PATH="$PATH:/path/to/lume" git clone lume::http://localhost:8788 /tmp/lume-git-copy
+```
+
 ## architecture
 
 - `core.src`   — object model, SHA-256 object store, `WriteBlob` fast path for blob JSON
@@ -61,3 +75,4 @@ echo "hello" > a.txt
 - `server.src` — raw HTTP object server for push/pull/clone
 - `remote.src` — push, pull, clone client protocol
 - `main.src`   — CLI dispatch
+- `git-remote-lume` — Python remote-helper that makes lume a git remote (`lume::` transport)

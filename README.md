@@ -26,6 +26,14 @@ Push/pull/clone over HTTP:
 ./lume clone http://host:8788 mycopy main  # clone a remote repo
 ```
 
+Or use it as a git remote with the included `git-remote-lume` helper:
+
+```sh
+git remote add origin lume::http://rbm21:8788
+git push origin main
+git clone lume::http://rbm21:8788 mycopy
+```
+
 ## benchmarks
 
 Measured on an x86_64 Linux workstation against `/usr/bin/git` 2.34.1, 110 small files across `src/` and `docs/`.
